@@ -171,9 +171,8 @@ DIFICULTAD_DEFAULT = 2.0
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# CACHED AGGREGATION HELPERS (Tab 6 performance)
+# AGGREGATION HELPERS (No cache needed, pandas grouping is 100x faster than memory hashing)
 # ──────────────────────────────────────────────────────────────────────────────
-@st.cache_data
 def compute_ranking(df_rad_ser):
     """Pre-compute ranking table from serialized radiologist data."""
     df = df_rad_ser
@@ -190,7 +189,7 @@ def compute_ranking(df_rad_ser):
     return rank.sort_values("Puntaje_Total", ascending=False)
 
 
-@st.cache_data
+
 def compute_detail_all(df_rad_ser):
     """Pre-compute per-radiologist + per-sector breakdown for all radiologists at once."""
     df = df_rad_ser
@@ -202,7 +201,7 @@ def compute_detail_all(df_rad_ser):
     return detail
 
 
-@st.cache_data
+
 def compute_evolution_general(df_rad_ser):
     """Pre-compute monthly evolution for entire center."""
     df = df_rad_ser
@@ -215,7 +214,7 @@ def compute_evolution_general(df_rad_ser):
     return evol
 
 
-@st.cache_data
+
 def compute_evolution_individual(df_rad_ser):
     """Pre-compute monthly evolution per radiologist."""
     df = df_rad_ser
@@ -581,6 +580,24 @@ tab6 = current_tab == tab_titles[5]
 tab7 = current_tab == tab_titles[6]
 tab8 = current_tab == tab_titles[7]
 tab9 = current_tab == tab_titles[8] if user_role == "admin" else False
+
+# ── Generador de Informe PDF ─────────────────────────────────────────────
+st.sidebar.markdown("---")
+st.sidebar.markdown("### 📄 Informe Gerencial")
+from utils_pdf import generar_informe_pdf
+pd_min_d = min_d if 'min_d' in locals() else None
+pd_max_d = max_d if 'max_d' in locals() else None
+if st.sidebar.button("Descargar Informe PDF", icon="📊", use_container_width=True):
+    with st.spinner("Generando reporte PDF..."):
+        pdf_bytes = generar_informe_pdf(df_filtered, pd_min_d, pd_max_d)
+        st.sidebar.download_button(
+            label="⬇️ Haz clic aquí para guardar tu PDF",
+            data=pdf_bytes,
+            file_name="informe_gerencial_iribas.pdf",
+            mime="application/pdf",
+            use_container_width=True,
+            type="primary"
+        )
 
 # ── TAB 1 — Evolución Histórica ─────────────────────────────────────────────
 if tab1:
