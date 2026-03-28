@@ -87,7 +87,14 @@ def generar_informe_pdf(df, min_d, max_d):
         
     # 4. Radiologos
     if "Doctor Informante" in df.columns:
-        df_rad = df.groupby("Doctor Informante").agg(Informes_Realizados=("Doctor Informante", "count")).reset_index().sort_values("Informes_Realizados", ascending=False).head(10)
+        df_rad = df.groupby("Doctor Informante").agg(Informes_Realizados=("Doctor Informante", "count"))
+        if "TOTAL" in df.columns:
+            df_rad["Facturacion (GN)"] = df.groupby("Doctor Informante")["TOTAL"].sum()
+            df_rad = df_rad.reset_index().sort_values("Facturacion (GN)", ascending=False).head(10)
+        else:
+            df_rad = df_rad.reset_index().sort_values("Informes_Realizados", ascending=False).head(10)
+            
+        df_rad = df_rad.rename(columns={"Informes_Realizados": "N° Estudios"})
         crear_tabla(pdf, df_rad, "Productividad de Radiologos Informantes (Top 10)")
         
     # 5. Seguros

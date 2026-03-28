@@ -424,6 +424,38 @@ user_role = st.session_state["user"]["role"]
 user_email = st.session_state["user"]["email"]
 
 # ──────────────────────────────────────────────────────────────────────────────
+# MENÚ LOGICO / NAV LATERAL
+# ──────────────────────────────────────────────────────────────────────────────
+# Determine tabs based on role
+tab_titles = [
+    "📈 Evolución Histórica",
+    "🔥 Mapa de Calor",
+    "💰 Financiero",
+    "🏢 Rendimiento Sector",
+    "🩺 Red de Derivación",
+    "🔬 Radiólogos Informantes",
+    "🛡️ Ranking Seguros",
+    "⚖️ Comparativa",
+]
+
+if user_role == "admin":
+    tab_titles.append("⚙️ Panel Admin")
+
+with st.sidebar:
+    current_tab = st.radio("📍 Menú Principal", tab_titles)
+    st.markdown("---")
+
+tab1 = current_tab == tab_titles[0]
+tab2 = current_tab == tab_titles[1]
+tab3 = current_tab == tab_titles[2]
+tab4 = current_tab == tab_titles[3]
+tab5 = current_tab == tab_titles[4]
+tab6 = current_tab == tab_titles[5]
+tab7 = current_tab == tab_titles[6]
+tab8 = current_tab == tab_titles[7]
+tab9 = current_tab == tab_titles[8] if user_role == "admin" else False
+
+# ──────────────────────────────────────────────────────────────────────────────
 # SIDEBAR – DATA UPLOAD & FILTERS
 # ──────────────────────────────────────────────────────────────────────────────
 CACHE_FILE_PATH = "data/last_uploaded.csv"
@@ -550,54 +582,26 @@ if df_filtered.empty:
     st.warning("⚠️ No hay datos para los filtros seleccionados. Ajusta los parámetros en la barra lateral.")
     st.stop()
 
-# ──────────────────────────────────────────────────────────────────────────────
-# MENÚ LOGICO / NAV LATERAL
-# ──────────────────────────────────────────────────────────────────────────────
-# Determine tabs based on role
-tab_titles = [
-    "📈 Evolución Histórica",
-    "🔥 Mapa de Calor",
-    "💰 Financiero",
-    "🏢 Rendimiento Sector",
-    "🩺 Red de Derivación",
-    "🔬 Radiólogos Informantes",
-    "🛡️ Ranking Seguros",
-    "⚖️ Comparativa",
-]
-
-if user_role == "admin":
-    tab_titles.append("⚙️ Panel Admin")
-
-st.sidebar.markdown("---")
-current_tab = st.sidebar.radio("📍 Menú Principal", tab_titles)
-
-tab1 = current_tab == tab_titles[0]
-tab2 = current_tab == tab_titles[1]
-tab3 = current_tab == tab_titles[2]
-tab4 = current_tab == tab_titles[3]
-tab5 = current_tab == tab_titles[4]
-tab6 = current_tab == tab_titles[5]
-tab7 = current_tab == tab_titles[6]
-tab8 = current_tab == tab_titles[7]
-tab9 = current_tab == tab_titles[8] if user_role == "admin" else False
-
 # ── Generador de Informe PDF ─────────────────────────────────────────────
-st.sidebar.markdown("---")
-st.sidebar.markdown("### 📄 Informe Gerencial")
-from utils_pdf import generar_informe_pdf
-pd_min_d = min_d if 'min_d' in locals() else None
-pd_max_d = max_d if 'max_d' in locals() else None
-if st.sidebar.button("Descargar Informe PDF", icon="📊", use_container_width=True):
-    with st.spinner("Generando reporte PDF..."):
-        pdf_bytes = generar_informe_pdf(df_filtered, pd_min_d, pd_max_d)
-        st.sidebar.download_button(
-            label="⬇️ Haz clic aquí para guardar tu PDF",
-            data=pdf_bytes,
-            file_name="informe_gerencial_iribas.pdf",
-            mime="application/pdf",
-            use_container_width=True,
-            type="primary"
-        )
+with st.sidebar:
+    st.markdown("---")
+    st.markdown("### 📄 Informe Gerencial")
+    from utils_pdf import generar_informe_pdf
+    pd_min_d = min_d if 'min_d' in locals() else None
+    pd_max_d = max_d if 'max_d' in locals() else None
+    if st.button("Descargar Informe PDF", icon="📊", use_container_width=True):
+        with st.spinner("Generando reporte PDF..."):
+            pdf_bytes = generar_informe_pdf(df_filtered, pd_min_d, pd_max_d)
+            st.download_button(
+                label="⬇️ Haz clic aquí para guardar tu PDF",
+                data=pdf_bytes,
+                file_name="informe_gerencial_iribas.pdf",
+                mime="application/pdf",
+                use_container_width=True,
+                type="primary"
+            )
+
+
 
 # ── TAB 1 — Evolución Histórica ─────────────────────────────────────────────
 if tab1:
