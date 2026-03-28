@@ -552,7 +552,7 @@ if df_filtered.empty:
     st.stop()
 
 # ──────────────────────────────────────────────────────────────────────────────
-# TABS
+# MENÚ LOGICO / NAV LATERAL
 # ──────────────────────────────────────────────────────────────────────────────
 # Determine tabs based on role
 tab_titles = [
@@ -569,13 +569,22 @@ tab_titles = [
 if user_role == "admin":
     tab_titles.append("⚙️ Panel Admin")
 
-tabs = st.tabs(tab_titles)
-tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = tabs[:8]
-if user_role == "admin":
-    tab9 = tabs[8]
+st.sidebar.markdown("---")
+current_tab = st.sidebar.radio("📍 Menú Principal", tab_titles)
+
+tab1 = current_tab == tab_titles[0]
+tab2 = current_tab == tab_titles[1]
+tab3 = current_tab == tab_titles[2]
+tab4 = current_tab == tab_titles[3]
+tab5 = current_tab == tab_titles[4]
+tab6 = current_tab == tab_titles[5]
+tab7 = current_tab == tab_titles[6]
+tab8 = current_tab == tab_titles[7]
+tab9 = current_tab == tab_titles[8] if user_role == "admin" else False
 
 # ── TAB 1 — Evolución Histórica ─────────────────────────────────────────────
-with tab1:
+if tab1:
+    st.markdown("### 📈 Evolución Histórica")
     st.markdown("### Volumen de Estudios e Ingresos a lo largo del Tiempo")
     if "Fecha" in df_filtered.columns and "TOTAL" in df_filtered.columns:
         df_t = (
@@ -621,7 +630,7 @@ with tab1:
         st.info("Columnas 'Fecha' o 'TOTAL' no disponibles.")
 
 # ── TAB 2 — Mapa de Calor Operativo ─────────────────────────────────────────
-with tab2:
+if tab2:
     st.markdown("### Picos de Saturación: Día de la Semana vs. Hora")
 
     if "Dia_Semana" in df_filtered.columns and "Hora_Num" in df_filtered.columns:
@@ -677,7 +686,7 @@ with tab2:
         st.info("Columnas de Día/Hora no disponibles.")
 
 # ── TAB 3 — Financiero ──────────────────────────────────────────────────────
-with tab3:
+if tab3:
     st.markdown("### Indicadores Clave de Rendimiento Financiero")
 
     total_rev = df_filtered["TOTAL"].sum() if "TOTAL" in df_filtered.columns else 0
@@ -803,7 +812,7 @@ with tab3:
             st.info("Selecciona al menos un sector para ver el análisis cruzado.")
 
 # ── TAB 4 — Rendimiento por Sector ──────────────────────────────────────────
-with tab4:
+if tab4:
     st.markdown("### Rendimiento por Sector Médico")
     if "Sector" in df_filtered.columns and "TOTAL" in df_filtered.columns:
         # ── Sector selector inside the tab ───────────────────────────────
@@ -879,7 +888,7 @@ with tab4:
         st.info("Columnas 'Sector' o 'TOTAL' no disponibles.")
 
 # ── TAB 5 — Red de Derivación ───────────────────────────────────────────────
-with tab5:
+if tab5:
     st.markdown("### Top 15 Doctores Tratantes — Volumen y Facturación")
     if "Doctor Tratante" in df_filtered.columns and "TOTAL" in df_filtered.columns:
         df_d = (
@@ -927,7 +936,7 @@ with tab5:
         st.info("Columnas 'Doctor Tratante' o 'TOTAL' no disponibles.")
 
 # ── TAB 6 — Radiólogos Informantes (KPI) ────────────────────────────────────
-with tab6:
+if tab6:
     st.markdown("### 🔬 KPI de Radiólogos Informantes")
     st.markdown(
         "Evaluación del rendimiento por volumen, tipo de estudio y **puntaje de dificultad ponderado**."
@@ -1243,7 +1252,7 @@ with tab6:
         st.info("Columnas 'Doctor Informante' o 'Sector' no disponibles para el análisis.")
 
 # ── TAB 7 — Ranking de Seguros ─────────────────────────────────────────────
-with tab7:
+if tab7:
     st.markdown("### 🛡️ Ranking de Seguros Médicos")
     st.markdown("Análisis de facturación, volumen y composición por aseguradora.")
 
@@ -1478,7 +1487,7 @@ with tab7:
         st.info("Columnas 'Seguro' o 'TOTAL' no disponibles.")
 
 # ── TAB 8 — Comparativa entre Períodos ─────────────────────────────────────
-with tab8:
+if tab8:
     st.markdown("### ⚖️ Comparativa de Períodos")
     st.markdown("Compara indicadores clave de rendimiento entre dos ventanas de tiempo distintas.")
 
@@ -1594,7 +1603,7 @@ with tab8:
 
 # ── TAB 9 — Panel Admin ────────────────────────────────────────────────────
 if user_role == "admin":
-    with tab9:
+    if tab9:
         st.markdown("### ⚙️ Administración y Auditoría")
         st.markdown("A continuación, puedes observar el registro de acciones que han realizado los diferentes usuarios (visualizar, acceso, etc.) así como el listado de usuarios con acceso a la plataforma.")
         
