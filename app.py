@@ -550,9 +550,11 @@ with st.sidebar:
         max_d = df["Fecha"].max().date()
         rango = st.date_input("📅 Rango de Fechas", [min_d, max_d])
         if len(rango) == 2:
+            start_ts = pd.to_datetime(rango[0])
+            end_ts = pd.to_datetime(rango[1]) + pd.Timedelta(days=1, microseconds=-1)
             df_filtered = df_filtered[
-                (df_filtered["Fecha"].dt.date >= rango[0])
-                & (df_filtered["Fecha"].dt.date <= rango[1])
+                (df_filtered["Fecha"] >= start_ts)
+                & (df_filtered["Fecha"] <= end_ts)
             ]
 
     # Mes
@@ -1546,11 +1548,13 @@ if tab8:
 
             if len(rango_a) == 2 and len(rango_b) == 2:
                 # ── Filtrar dataframes ────────────────────────────────────
-                start_a, end_a = rango_a
-                start_b, end_b = rango_b
+                start_a = pd.to_datetime(rango_a[0])
+                end_a = pd.to_datetime(rango_a[1]) + pd.Timedelta(days=1, microseconds=-1)
+                start_b = pd.to_datetime(rango_b[0])
+                end_b = pd.to_datetime(rango_b[1]) + pd.Timedelta(days=1, microseconds=-1)
                 
-                df_a = df[(df["Fecha"].dt.date >= start_a) & (df["Fecha"].dt.date <= end_a)]
-                df_b = df[(df["Fecha"].dt.date >= start_b) & (df["Fecha"].dt.date <= end_b)]
+                df_a = df[(df["Fecha"] >= start_a) & (df["Fecha"] <= end_a)]
+                df_b = df[(df["Fecha"] >= start_b) & (df["Fecha"] <= end_b)]
 
                 st.markdown("---")
                 
