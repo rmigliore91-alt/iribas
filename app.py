@@ -39,6 +39,15 @@ st.markdown("""
 html, body, [class*="st-"] {
     font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif !important;
 }
+
+/* EVITAR QUE EL FONT OVERRIDE ROMPA LOS ICONOS (LIGATURES) */
+.material-symbols-rounded, 
+.material-symbols-outlined, 
+.material-icons, 
+[class*="stIcon"],
+[data-testid="stIconMaterial"] {
+    font-family: 'Material Symbols Rounded', 'Material Icons', sans-serif !important;
+}
 .stApp { background: var(--bg-primary); }
 
 section[data-testid="stSidebar"] {
