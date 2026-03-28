@@ -473,7 +473,7 @@ if df_filtered.empty:
 # ──────────────────────────────────────────────────────────────────────────────
 # TABS
 # ──────────────────────────────────────────────────────────────────────────────
-tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
     "📈 Evolución Histórica",
     "🔥 Mapa de Calor",
     "💰 Financiero",
@@ -481,6 +481,7 @@ tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
     "🩺 Red de Derivación",
     "🔬 Radiólogos Informantes",
     "🛡️ Ranking Seguros",
+    "⚖️ Comparativa",
 ])
 
 # ── TAB 1 — Evolución Histórica ─────────────────────────────────────────────
@@ -1385,3 +1386,119 @@ with tab7:
             )
     else:
         st.info("Columnas 'Seguro' o 'TOTAL' no disponibles.")
+
+# ── TAB 8 — Comparativa entre Períodos ─────────────────────────────────────
+with tab8:
+    st.markdown("### ⚖️ Comparativa de Períodos")
+    st.markdown("Compara indicadores clave de rendimiento entre dos ventanas de tiempo distintas.")
+
+    if "Fecha" in df.columns:
+        # Default dates: 
+        min_date = df["Fecha"].min().date() if not pd.isna(df["Fecha"].min()) else None
+        max_date = df["Fecha"].max().date() if not pd.isna(df["Fecha"].max()) else None
+        
+        if min_date and max_date:
+            from datetime import timedelta
+            
+            # Simple heuristic for defaults: Periodo B = last 30 days of data, Periodo A = previous 30 days
+            default_b_end = max_date
+            default_b_start = max(min_date, default_b_end - timedelta(days=29))
+            default_a_end = max(min_date, default_b_start - timedelta(days=1))
+            default_a_start = max(min_date, default_a_end - timedelta(days=29))
+
+            col_a, col_b = st.columns(2)
+            with col_a:
+                st.markdown("#### 📅 Período A (Base)")
+                rango_a = st.date_input("Fechas del Período A", value=(default_a_start, default_a_end), key="rango_a", min_value=min_date, max_value=max_date)
+            
+            with col_b:
+                st.markdown("#### 📅 Período B (Comparación)")
+                rango_b = st.date_input("Fechas del Período B", value=(default_b_start, default_b_end), key="rango_b", min_value=min_date, max_value=max_date)
+
+            if len(rango_a) == 2 and len(rango_b) == 2:
+                # ── Filtrar dataframes ────────────────────────────────────
+                start_a, end_a = rango_a
+                start_b, end_b = rango_b
+                
+                df_a = df[(df["Fecha"].dt.date >= start_a) & (df["Fecha"].dt.date <= end_a)]
+                df_b = df[(df["Fecha"].dt.date >= start_b) & (df["Fecha"].dt.date <= end_b)]
+
+                st.markdown("---")
+                
+                # ── Calcular métricas globales ────────────────────────────
+                fac_a = df_a["TOTAL"].sum() if "TOTAL" in df_a.columns else 0
+                est_a = len(df_a)
+                ticket_a = fac_a / est_a if est_a else 0
+                
+                fac_b = df_b["TOTAL"].sum() if "TOTAL" in df_b.columns else 0
+                est_b = len(df_b)
+                ticket_b = fac_b / est_b if est_b else 0
+                
+                # Deltas
+                def pct_change(old, new):
+                    if old == 0 and new == 0: return "0%"
+                    if old == 0: return "∞%"
+                    pct = ((new - old) / old) * 100
+                    return f"{pct:+.1f}%"
+
+                colK1, colK2, colK3 = st.columns(3)
+                colK1.metric("💵 Facturación (B vs A)", f"₲ {fac_b:,.0f}", delta=pct_change(fac_a, fac_b))
+                colK2.metric("📋 Volumen Estudios", f"{est_b:,}", delta=pct_change(est_a, est_b))
+                colK3.metric("🎫 Ticket Prom.", f"₲ {ticket_b:,.0f}", delta=pct_change(ticket_a, ticket_b))
+
+                st.markdown("---")
+
+                # ── Gráficos Comparativos: Sectores ───────────────────────
+                if "Sector" in df.columns:
+                    # Agrupar A
+                    df_sec_a = df_a.groupby("Sector").agg(Facturacion_A=("TOTAL", "sum"), Estudios_A=("Sector", "count")).reset_index()
+                    # Agrupar B
+                    df_sec_b = df_b.groupby("Sector").agg(Facturacion_B=("TOTAL", "sum"), Estudios_B=("Sector", "count")).reset_index()
+                    
+                    # Merge outer for comparison
+                    df_comp = pd.merge(df_sec_a, df_sec_b, on="Sector", how="outer").fillna(0)
+                    df_comp = df_comp.sort_values("Estudios_B", ascending=False).head(15) # Top 15 para visualizar mejor
+                    
+                    st.markdown("#### Comparación por Sector")
+                    tc1, tc2 = st.tabs(["📊 Volumen", "💰 Facturación"])
+                    
+                    with tc1:
+                        fig_vol_comp = go.Figure()
+                        fig_vol_comp.add_trace(go.Bar(
+                            x=df_comp["Sector"], y=df_comp["Estudios_A"],
+                            name="Período A", marker_color="#1f6feb"
+                        ))
+                        fig_vol_comp.add_trace(go.Bar(
+                            x=df_comp["Sector"], y=df_comp["Estudios_B"],
+                            name="Período B", marker_color="#3fb950"
+                        ))
+                        fig_vol_comp.update_layout(
+                            **PLOTLY_LAYOUT, barmode='group',
+                            xaxis_title="Sector", yaxis_title="Cantidad de Estudios",
+                            height=400,
+                        )
+                        st.plotly_chart(fig_vol_comp, use_container_width=True, key="comp_vol")
+                        
+                    with tc2:
+                        fig_fac_comp = go.Figure()
+                        fig_fac_comp.add_trace(go.Bar(
+                            x=df_comp["Sector"], y=df_comp["Facturacion_A"],
+                            name="Período A", marker_color="#1f6feb"
+                        ))
+                        fig_fac_comp.add_trace(go.Bar(
+                            x=df_comp["Sector"], y=df_comp["Facturacion_B"],
+                            name="Período B", marker_color="#3fb950"
+                        ))
+                        fig_fac_comp.update_layout(
+                            **PLOTLY_LAYOUT, barmode='group',
+                            xaxis_title="Sector", yaxis_title="Facturación (₲)",
+                            height=400,
+                        )
+                        st.plotly_chart(fig_fac_comp, use_container_width=True, key="comp_fac")
+            else:
+                st.info("Selecciona rangos de inicio y fin para ambos períodos.")
+        else:
+            st.info("La columna de fechas no contiene datos válidos.")
+    else:
+        st.info("La columna 'Fecha' no está disponible para hacer comparaciones temporales.")
+
