@@ -177,7 +177,11 @@ def compute_ranking(df_rad_ser):
     df = df_rad_ser
     rank = (
         df.groupby("Doctor Informante")
-        .agg(Estudios=("Doctor Informante", "count"), Puntaje_Total=("Puntaje_Dificultad", "sum"))
+        .agg(
+            Estudios=("Doctor Informante", "count"),
+            Puntaje_Total=("Puntaje_Dificultad", "sum"),
+            Facturacion=("TOTAL", "sum") if "TOTAL" in df.columns else ("Puntaje_Dificultad", "count")
+        )
         .reset_index()
     )
     rank["Puntaje_Prom"] = rank["Puntaje_Total"] / rank["Estudios"]
@@ -847,14 +851,16 @@ with tab6:
             # ── Global KPIs ──────────────────────────────────────────────
             n_radiologos = len(df_ranking)
             total_estudios_rad = df_ranking["Estudios"].sum()
+            total_fac_rad = df_ranking["Facturacion"].sum() if "Facturacion" in df_ranking.columns else 0
             total_puntaje = df_ranking["Puntaje_Total"].sum()
             prom_puntaje = total_puntaje / n_radiologos if n_radiologos else 0
 
-            gk1, gk2, gk3, gk4 = st.columns(4)
+            gk1, gk2, gk3, gk4, gk5 = st.columns(5)
             gk1.metric("👨‍⚕️ Radiólogos Activos", f"{n_radiologos}")
-            gk2.metric("📋 Estudios Informados", f"{total_estudios_rad:,}")
+            gk2.metric("📋 Estudios", f"{total_estudios_rad:,}")
             gk3.metric("⚡ Puntaje Total", f"{total_puntaje:,.1f}")
-            gk4.metric("📊 Puntaje Prom/Radiólogo", f"{prom_puntaje:,.1f}")
+            gk4.metric("📊 Dificultad Prom.", f"{prom_puntaje:,.1f}")
+            gk5.metric("💵 Facturación Aportada", f"₲ {total_fac_rad:,.0f}")
 
             st.markdown("---")
 
@@ -914,15 +920,41 @@ with tab6:
                 )
                 st.plotly_chart(fig_rank_vol, use_container_width=True, key="rad_rank_vol")
 
+                if "Facturacion" in df_ranking.columns:
+                    st.markdown("#### Dinero Aportado (Facturación por Radiólogo)")
+                    df_rank_fac = df_ranking.sort_values("Facturacion", ascending=True)
+                    fig_rank_fac = px.bar(
+                        df_rank_fac, y="Doctor Informante", x="Facturacion",
+                        orientation="h", text="Facturacion",
+                        color="Facturacion",
+                        color_continuous_scale=["#1a1e2e", "#3fb950"],
+                    )
+                    fig_rank_fac.update_traces(
+                        texttemplate="₲%{text:,.0f}", textposition="outside", textfont_size=11,
+                        hovertemplate="<b>%{y}</b><br>Facturación: ₲%{x:,.0f}<extra></extra>",
+                    )
+                    fig_rank_fac.update_layout(
+                        **PLOTLY_LAYOUT, title=None,
+                        height=max(450, len(df_rank_fac) * 30),
+                        yaxis=dict(title=""),
+                        xaxis=dict(title="Facturación (₲)", gridcolor="rgba(48,54,61,0.4)"),
+                        coloraxis_showscale=False,
+                    )
+                    st.plotly_chart(fig_rank_fac, use_container_width=True, key="rad_rank_fac")
+
                 st.markdown("#### Tabla Resumen")
                 df_rank_tbl = df_ranking.copy()
                 df_rank_tbl["Puntaje_Total"] = df_rank_tbl["Puntaje_Total"].apply(lambda v: f"{v:,.1f}")
                 df_rank_tbl["Puntaje_Prom"] = df_rank_tbl["Puntaje_Prom"].apply(lambda v: f"{v:.2f}")
+                if "Facturacion" in df_rank_tbl.columns:
+                    df_rank_tbl["Facturacion"] = df_rank_tbl["Facturacion"].apply(lambda v: f"₲ {v:,.0f}")
+                
                 st.dataframe(
                     df_rank_tbl.rename(columns={
                         "Doctor Informante": "Radiólogo",
                         "Puntaje_Total": "Puntaje Total",
                         "Puntaje_Prom": "Dificultad Prom.",
+                        "Facturacion": "Facturación",
                     }),
                     use_container_width=True, hide_index=True,
                 )
