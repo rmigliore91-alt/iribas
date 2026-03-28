@@ -3,6 +3,7 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 import os
+import auth
 
 # ──────────────────────────────────────────────────────────────────────────────
 # PAGE CONFIG & CUSTOM THEME
@@ -23,10 +24,10 @@ st.markdown("""
     --bg-primary: #0e1117;
     --bg-card: #161b22;
     --bg-card-hover: #1c2333;
-    --accent: #58a6ff;
-    --accent-glow: rgba(88, 166, 255, 0.15);
+    --accent: #A11C32;
+    --accent-glow: rgba(161, 28, 50, 0.15);
     --accent-green: #3fb950;
-    --accent-purple: #bc8cff;
+    --accent-purple: #264C8D;
     --accent-orange: #f0883e;
     --accent-pink: #f778ba;
     --text-primary: #e6edf3;
@@ -355,35 +356,115 @@ st.markdown(
 )
 
 # ──────────────────────────────────────────────────────────────────────────────
+# AUTHENTICATION
+# ──────────────────────────────────────────────────────────────────────────────
+if "user" not in st.session_state:
+    st.session_state["user"] = None
+
+def show_auth_page():
+    # Decorate login page with custom background color elements if needed
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col2:
+        st.markdown("<br><br>", unsafe_allow_html=True)
+        if os.path.exists("assets/logo.png"):
+            st.image("assets/logo.png", use_container_width=True)
+        else:
+            st.markdown(
+                """
+                <div style="background: linear-gradient(135deg, #A11C32 0%, #264C8D 100%); 
+                            padding: 20px; border-radius: 12px; text-align: center; margin-bottom: 20px;">
+                    <h1 style='color: white; margin:0;'>INSTITUTO IRIBAS</h1>
+                    <h4 style='color: rgba(255,255,255,0.8); margin:0;'>Analítica Médica</h4>
+                </div>
+                """, unsafe_allow_html=True
+            )
+            
+        st.markdown("---")
+        
+        tab_login, tab_register = st.tabs(["🚀 Iniciar Sesión", "📝 Crear Cuenta"])
+        
+        with tab_login:
+            with st.form("login_form"):
+                email = st.text_input("Ingresa tu correo (@iribas.com.py)")
+                password = st.text_input("Contraseña", type="password")
+                submit = st.form_submit_button("Ingresar", use_container_width=True)
+                
+                if submit:
+                    user_data = auth.login_user(email, password)
+                    if user_data:
+                        st.session_state["user"] = user_data
+                        auth.log_action(email, "Inició sesión")
+                        st.success("¡Bienvenido!")
+                        st.rerun()
+                    else:
+                        st.error("Credenciales incorrectas o usuario no registrado.")
+                        
+        with tab_register:
+            with st.form("register_form"):
+                reg_email = st.text_input("Correo Institucional (@iribas.com.py)")
+                reg_password = st.text_input("Crea una contraseña", type="password")
+                reg_submit = st.form_submit_button("Registrarse", use_container_width=True)
+                
+                if reg_submit:
+                    success, msg = auth.register_user(reg_email, reg_password)
+                    if success:
+                        auth.log_action(reg_email, "Creó una nueva cuenta")
+                        st.success(msg)
+                    else:
+                        st.error(msg)
+                        
+    st.stop()
+
+if st.session_state["user"] is None:
+    show_auth_page()
+
+from utils_auth import init_sidebar_auth
+init_sidebar_auth()
+
+user_role = st.session_state["user"]["role"]
+user_email = st.session_state["user"]["email"]
+
+# ──────────────────────────────────────────────────────────────────────────────
 # SIDEBAR – DATA UPLOAD & FILTERS
 # ──────────────────────────────────────────────────────────────────────────────
 CACHE_FILE_PATH = "data/last_uploaded.csv"
 
 with st.sidebar:
-    st.markdown("## 📂 Carga de Datos")
-    uploaded_file = st.file_uploader(
-        "Arrastra o selecciona tu archivo CSV",
-        type=["csv"],
-        help="Archivo CSV con columnas: Fecha, Hora, Seguro, Sector, Doctor Tratante, TOTAL, etc.",
-    )
+    if user_role == "admin":
+        st.markdown("## 📂 Gestión de Datos (Admin)")
+        uploaded_file = st.file_uploader(
+            "Sube un nuevo archivo CSV consolidado",
+            type=["csv"],
+            help="Sustituirá la base de datos actual para todos los usuarios."
+        )
 
-    if uploaded_file is not None:
-        os.makedirs(os.path.dirname(CACHE_FILE_PATH), exist_ok=True)
-        with open(CACHE_FILE_PATH, "wb") as f:
-            f.write(uploaded_file.getbuffer())
-        file_to_load = uploaded_file
-    elif os.path.exists(CACHE_FILE_PATH):
-        file_to_load = CACHE_FILE_PATH
-        st.success("✅ Datos cargados automáticamente desde sesión previa.")
+        if uploaded_file is not None:
+            os.makedirs(os.path.dirname(CACHE_FILE_PATH), exist_ok=True)
+            with open(CACHE_FILE_PATH, "wb") as f:
+                f.write(uploaded_file.getbuffer())
+            file_to_load = uploaded_file
+            auth.log_action(user_email, "Subió un nuevo archivo CSV")
+        elif os.path.exists(CACHE_FILE_PATH):
+            file_to_load = CACHE_FILE_PATH
+            st.success("✅ Base de datos activa y en línea.")
+        else:
+            file_to_load = None
+            
+        if file_to_load is not None:
+            st.markdown("---")
+            if st.button("🗑️ Borrar Datos y Reiniciar App"):
+                if os.path.exists(CACHE_FILE_PATH):
+                    os.remove(CACHE_FILE_PATH)
+                auth.log_action(user_email, "Eliminó la base de datos CSV")
+                st.rerun()
     else:
-        file_to_load = None
-        
-    if file_to_load is not None:
-        st.markdown("---")
-        if st.button("🗑️ Borrar Datos y Reiniciar"):
-            if os.path.exists(CACHE_FILE_PATH):
-                os.remove(CACHE_FILE_PATH)
-            st.rerun()
+        st.markdown("## 📂 Estado de Datos")
+        if os.path.exists(CACHE_FILE_PATH):
+            file_to_load = CACHE_FILE_PATH
+            st.success("✅ Base de datos activa y en línea.")
+        else:
+            file_to_load = None
+            st.warning("⚠️ El administrador aún no ha cargado los datos.")
 
 # ──────────────────────────────────────────────────────────────────────────────
 # LANDING STATE
@@ -473,7 +554,8 @@ if df_filtered.empty:
 # ──────────────────────────────────────────────────────────────────────────────
 # TABS
 # ──────────────────────────────────────────────────────────────────────────────
-tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
+# Determine tabs based on role
+tab_titles = [
     "📈 Evolución Histórica",
     "🔥 Mapa de Calor",
     "💰 Financiero",
@@ -482,7 +564,15 @@ tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
     "🔬 Radiólogos Informantes",
     "🛡️ Ranking Seguros",
     "⚖️ Comparativa",
-])
+]
+
+if user_role == "admin":
+    tab_titles.append("⚙️ Panel Admin")
+
+tabs = st.tabs(tab_titles)
+tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = tabs[:8]
+if user_role == "admin":
+    tab9 = tabs[8]
 
 # ── TAB 1 — Evolución Histórica ─────────────────────────────────────────────
 with tab1:
@@ -1501,4 +1591,21 @@ with tab8:
             st.info("La columna de fechas no contiene datos válidos.")
     else:
         st.info("La columna 'Fecha' no está disponible para hacer comparaciones temporales.")
+
+# ── TAB 9 — Panel Admin ────────────────────────────────────────────────────
+if user_role == "admin":
+    with tab9:
+        st.markdown("### ⚙️ Administración y Auditoría")
+        st.markdown("A continuación, puedes observar el registro de acciones que han realizado los diferentes usuarios (visualizar, acceso, etc.) así como el listado de usuarios con acceso a la plataforma.")
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            st.markdown("#### 📜 Registro de Actividad (Log)")
+            logs_df = auth.get_logs()
+            st.dataframe(logs_df, use_container_width=True, hide_index=True, height=400)
+            
+        with col2:
+            st.markdown("#### 👥 Usuarios Registrados")
+            users_df = auth.get_users()
+            st.dataframe(users_df, use_container_width=True, hide_index=True)
 
