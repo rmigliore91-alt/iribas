@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
+import os
 
 # ──────────────────────────────────────────────────────────────────────────────
 # PAGE CONFIG & CUSTOM THEME
@@ -356,6 +357,8 @@ st.markdown(
 # ──────────────────────────────────────────────────────────────────────────────
 # SIDEBAR – DATA UPLOAD & FILTERS
 # ──────────────────────────────────────────────────────────────────────────────
+CACHE_FILE_PATH = "data/last_uploaded.csv"
+
 with st.sidebar:
     st.markdown("## 📂 Carga de Datos")
     uploaded_file = st.file_uploader(
@@ -364,10 +367,28 @@ with st.sidebar:
         help="Archivo CSV con columnas: Fecha, Hora, Seguro, Sector, Doctor Tratante, TOTAL, etc.",
     )
 
+    if uploaded_file is not None:
+        os.makedirs(os.path.dirname(CACHE_FILE_PATH), exist_ok=True)
+        with open(CACHE_FILE_PATH, "wb") as f:
+            f.write(uploaded_file.getbuffer())
+        file_to_load = uploaded_file
+    elif os.path.exists(CACHE_FILE_PATH):
+        file_to_load = CACHE_FILE_PATH
+        st.success("✅ Datos cargados automáticamente desde sesión previa.")
+    else:
+        file_to_load = None
+        
+    if file_to_load is not None:
+        st.markdown("---")
+        if st.button("🗑️ Borrar Datos y Reiniciar"):
+            if os.path.exists(CACHE_FILE_PATH):
+                os.remove(CACHE_FILE_PATH)
+            st.rerun()
+
 # ──────────────────────────────────────────────────────────────────────────────
 # LANDING STATE
 # ──────────────────────────────────────────────────────────────────────────────
-if uploaded_file is None:
+if file_to_load is None:
     st.markdown("---")
     col_l, col_c, col_r = st.columns([1, 2, 1])
     with col_c:
@@ -395,7 +416,7 @@ if uploaded_file is None:
 # ──────────────────────────────────────────────────────────────────────────────
 # LOAD & FILTER
 # ──────────────────────────────────────────────────────────────────────────────
-df = load_data(uploaded_file)
+df = load_data(file_to_load)
 df_filtered = df.copy()
 
 with st.sidebar:
