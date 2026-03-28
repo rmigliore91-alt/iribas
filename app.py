@@ -548,7 +548,16 @@ with st.sidebar:
     if "Fecha" in df.columns and df["Fecha"].notna().any():
         min_d = df["Fecha"].min().date()
         max_d = df["Fecha"].max().date()
-        rango = st.date_input("📅 Rango de Fechas", [min_d, max_d])
+        
+        # Definir como mes por omisión el último disponible cargado
+        default_start = max_d.replace(day=1)
+        
+        rango = st.date_input(
+            "📅 Rango de Fechas",
+            value=[default_start, max_d],
+            min_value=min_d,
+            max_value=max_d
+        )
         if len(rango) == 2:
             start_ts = pd.to_datetime(rango[0])
             end_ts = pd.to_datetime(rango[1]) + pd.Timedelta(days=1, microseconds=-1)
