@@ -445,6 +445,7 @@ tab_titles = [
     "🔬 Radiólogos Informantes",
     "🛡️ Ranking Seguros",
     "⚖️ Comparativa",
+    "🔎 Análisis de Estudios",
 ]
 
 if user_role == "admin":
@@ -462,7 +463,8 @@ tab5 = current_tab == tab_titles[4]
 tab6 = current_tab == tab_titles[5]
 tab7 = current_tab == tab_titles[6]
 tab8 = current_tab == tab_titles[7]
-tab9 = current_tab == tab_titles[8] if user_role == "admin" else False
+tab10 = current_tab == tab_titles[8]
+tab9 = current_tab == tab_titles[9] if user_role == "admin" else False
 
 # ──────────────────────────────────────────────────────────────────────────────
 # SIDEBAR – DATA UPLOAD & FILTERS
@@ -1634,6 +1636,270 @@ if tab8:
             st.info("La columna de fechas no contiene datos válidos.")
     else:
         st.info("La columna 'Fecha' no está disponible para hacer comparaciones temporales.")
+
+# ── TAB 10 — Análisis de Estudios ──────────────────────────────────────────
+if tab10:
+    st.markdown("### 🔎 Análisis Profundo de Estudios")
+    st.markdown("Explora en detalle los tipos de estudios realizados, qué médicos derivan más para cada modalidad, y qué estudios generan mayor facturación.")
+
+    has_sector = "Sector" in df_filtered.columns
+    has_estudio = "Estudio" in df_filtered.columns
+    has_total = "TOTAL" in df_filtered.columns
+    has_doc = "Doctor Tratante" in df_filtered.columns
+    has_informante = "Doctor Informante" in df_filtered.columns
+
+    # ── Filtros propios de esta pestaña ──────────────────────────────────
+    fc1, fc2, fc3 = st.columns(3)
+    with fc1:
+        if has_sector:
+            opciones_sector = ["Todos"] + sorted(df_filtered["Sector"].dropna().unique().tolist())
+            filtro_sector = st.selectbox("🏷️ Modalidad / Sector", opciones_sector, index=0, key="est_sector")
+        else:
+            filtro_sector = "Todos"
+    with fc2:
+        if has_doc:
+            opciones_doc = ["Todos"] + sorted(df_filtered["Doctor Tratante"].dropna().unique().tolist())
+            filtro_doc = st.selectbox("👨‍⚕️ Doctor Tratante", opciones_doc, index=0, key="est_doc")
+        else:
+            filtro_doc = "Todos"
+    with fc3:
+        if has_informante:
+            opciones_inf = ["Todos"] + sorted(df_filtered["Doctor Informante"].dropna().unique().tolist())
+            filtro_inf = st.selectbox("🔬 Radiólogo Informante", opciones_inf, index=0, key="est_inf")
+        else:
+            filtro_inf = "Todos"
+
+    # Aplicar filtros locales
+    df_est = df_filtered.copy()
+    if filtro_sector != "Todos" and has_sector:
+        df_est = df_est[df_est["Sector"] == filtro_sector]
+    if filtro_doc != "Todos" and has_doc:
+        df_est = df_est[df_est["Doctor Tratante"] == filtro_doc]
+    if filtro_inf != "Todos" and has_informante:
+        df_est = df_est[df_est["Doctor Informante"] == filtro_inf]
+
+    st.markdown("---")
+
+    # ── KPIs rápidos ─────────────────────────────────────────────────
+    total_est = len(df_est)
+    fac_est = df_est["TOTAL"].sum() if has_total else 0
+    ticket_est = fac_est / total_est if total_est > 0 else 0
+    n_sectores = df_est["Sector"].nunique() if has_sector else 0
+    n_estudios = df_est["Estudio"].nunique() if has_estudio else 0
+
+    k1, k2, k3, k4 = st.columns(4)
+    k1.metric("📋 Total Estudios", f"{total_est:,}")
+    k2.metric("💵 Facturación", f"₲ {fac_est:,.0f}")
+    k3.metric("🎫 Ticket Prom.", f"₲ {ticket_est:,.0f}")
+    k4.metric("🏷️ Modalidades" if n_estudios == 0 else "📊 Tipos de Estudio", f"{n_sectores}" if n_estudios == 0 else f"{n_estudios}")
+
+    st.markdown("---")
+
+    # ───────────────────────────────────────────────────────────────────
+    # SECCIÓN 1: Ranking de Estudios por Facturación y Volumen
+    # ───────────────────────────────────────────────────────────────────
+    # Intentar agrupar por columna "Estudio" si existe, sino por "Sector"
+    group_col = "Estudio" if has_estudio else ("Sector" if has_sector else None)
+
+    if group_col:
+        st.markdown(f"#### 🏆 Ranking de {'Estudios' if has_estudio else 'Modalidades'} por Facturación")
+        
+        agg_dict = {group_col: "count"}
+        rename_map = {group_col: "Volumen"}
+        if has_total:
+            df_rank_est = df_est.groupby(group_col).agg(
+                Volumen=(group_col, "count"),
+                Facturacion=("TOTAL", "sum")
+            ).reset_index()
+            df_rank_est["Ticket_Prom"] = df_rank_est["Facturacion"] / df_rank_est["Volumen"]
+            df_rank_est = df_rank_est.sort_values("Facturacion", ascending=False)
+        else:
+            df_rank_est = df_est.groupby(group_col).size().reset_index(name="Volumen")
+            df_rank_est = df_rank_est.sort_values("Volumen", ascending=False)
+
+        top_n = min(20, len(df_rank_est))
+        df_top = df_rank_est.head(top_n)
+
+        rc1, rc2 = st.columns(2)
+        with rc1:
+            if has_total:
+                fig_rank_fac = px.bar(
+                    df_top.sort_values("Facturacion", ascending=True).tail(15),
+                    y=group_col, x="Facturacion", orientation="h",
+                    text="Facturacion", color="Facturacion",
+                    color_continuous_scale=[[0, "#264C8D"], [1, "#A11C32"]],
+                )
+                fig_rank_fac.update_traces(
+                    texttemplate="₲%{text:,.0f}", textposition="inside",
+                    hovertemplate="<b>%{y}</b><br>Facturación: ₲%{x:,.0f}<extra></extra>",
+                )
+                fig_rank_fac.update_layout(
+                    **PLOTLY_LAYOUT, showlegend=False,
+                    title=f"Top {min(15, top_n)} por Facturación",
+                    xaxis=dict(title="Facturación (₲)", gridcolor="rgba(48,54,61,0.4)"),
+                    yaxis=dict(title=""),
+                    height=500, coloraxis_showscale=False,
+                )
+                st.plotly_chart(fig_rank_fac, use_container_width=True, key="est_rank_fac")
+
+        with rc2:
+            fig_rank_vol = px.bar(
+                df_top.sort_values("Volumen", ascending=True).tail(15),
+                y=group_col, x="Volumen", orientation="h",
+                text="Volumen", color="Volumen",
+                color_continuous_scale=[[0, "#1f3a5f"], [1, "#58a6ff"]],
+            )
+            fig_rank_vol.update_traces(
+                texttemplate="%{text:,}", textposition="inside",
+                hovertemplate="<b>%{y}</b><br>Volumen: %{x:,}<extra></extra>",
+            )
+            fig_rank_vol.update_layout(
+                **PLOTLY_LAYOUT, showlegend=False,
+                title=f"Top {min(15, top_n)} por Volumen",
+                xaxis=dict(title="Cantidad", gridcolor="rgba(48,54,61,0.4)"),
+                yaxis=dict(title=""),
+                height=500, coloraxis_showscale=False,
+            )
+            st.plotly_chart(fig_rank_vol, use_container_width=True, key="est_rank_vol")
+
+        # Tabla resumen
+        with st.expander("📋 Tabla completa de estudios", expanded=False):
+            df_display = df_rank_est.copy()
+            if has_total:
+                df_display["Facturacion"] = df_display["Facturacion"].apply(lambda v: f"₲ {v:,.0f}")
+                df_display["Ticket_Prom"] = df_display["Ticket_Prom"].apply(lambda v: f"₲ {v:,.0f}")
+            st.dataframe(df_display, use_container_width=True, hide_index=True, height=350)
+
+    st.markdown("---")
+
+    # ───────────────────────────────────────────────────────────────────
+    # SECCIÓN 2: ¿Qué médico envía más por cada tipo de estudio/sector?
+    # ───────────────────────────────────────────────────────────────────
+    if has_doc and has_sector:
+        st.markdown("#### 👨‍⚕️ Top Derivantes por Modalidad")
+        st.markdown("Descubre qué médico envía más pacientes a cada tipo de estudio.")
+
+        # Agrupar
+        df_doc_sec = df_est.groupby(["Sector", "Doctor Tratante"]).agg(
+            Derivaciones=("Doctor Tratante", "count")
+        ).reset_index()
+        if has_total:
+            df_doc_sec_fac = df_est.groupby(["Sector", "Doctor Tratante"])["TOTAL"].sum().reset_index(name="Facturacion")
+            df_doc_sec = df_doc_sec.merge(df_doc_sec_fac, on=["Sector", "Doctor Tratante"], how="left")
+
+        # Selector de modalidad para explorar
+        modalidades_disponibles = sorted(df_doc_sec["Sector"].unique().tolist())
+        sel_modal = st.selectbox("🏷️ Selecciona la Modalidad a explorar", modalidades_disponibles, key="modal_explore")
+
+        df_modal = df_doc_sec[df_doc_sec["Sector"] == sel_modal].sort_values("Derivaciones", ascending=False).head(10)
+
+        mc1, mc2 = st.columns(2)
+        with mc1:
+            fig_doc_modal = px.bar(
+                df_modal.sort_values("Derivaciones", ascending=True),
+                y="Doctor Tratante", x="Derivaciones", orientation="h",
+                text="Derivaciones", color="Derivaciones",
+                color_continuous_scale=[[0, "#1f3a5f"], [1, "#3fb950"]],
+            )
+            fig_doc_modal.update_traces(
+                texttemplate="%{text:,}", textposition="inside",
+                hovertemplate="<b>%{y}</b><br>Derivaciones: %{x:,}<extra></extra>",
+            )
+            fig_doc_modal.update_layout(
+                **PLOTLY_LAYOUT, showlegend=False,
+                title=f"Top 10 Derivantes → {sel_modal}",
+                xaxis=dict(title="Derivaciones", gridcolor="rgba(48,54,61,0.4)"),
+                yaxis=dict(title=""),
+                height=400, coloraxis_showscale=False,
+            )
+            st.plotly_chart(fig_doc_modal, use_container_width=True, key="doc_modal_vol")
+
+        with mc2:
+            if has_total and "Facturacion" in df_modal.columns:
+                fig_doc_fac = px.bar(
+                    df_modal.sort_values("Facturacion", ascending=True),
+                    y="Doctor Tratante", x="Facturacion", orientation="h",
+                    text="Facturacion", color="Facturacion",
+                    color_continuous_scale=[[0, "#264C8D"], [1, "#A11C32"]],
+                )
+                fig_doc_fac.update_traces(
+                    texttemplate="₲%{text:,.0f}", textposition="inside",
+                    hovertemplate="<b>%{y}</b><br>Facturación: ₲%{x:,.0f}<extra></extra>",
+                )
+                fig_doc_fac.update_layout(
+                    **PLOTLY_LAYOUT, showlegend=False,
+                    title=f"Top 10 por Facturación → {sel_modal}",
+                    xaxis=dict(title="Facturación (₲)", gridcolor="rgba(48,54,61,0.4)"),
+                    yaxis=dict(title=""),
+                    height=400, coloraxis_showscale=False,
+                )
+                st.plotly_chart(fig_doc_fac, use_container_width=True, key="doc_modal_fac")
+            else:
+                st.info("Columna TOTAL no disponible para facturación.")
+
+    st.markdown("---")
+
+    # ───────────────────────────────────────────────────────────────────
+    # SECCIÓN 3: Composición de facturación por modalidad (Torta)
+    # ───────────────────────────────────────────────────────────────────
+    if has_sector and has_total:
+        st.markdown("#### 🧩 Composición de la Facturación por Modalidad")
+        
+        pc1, pc2 = st.columns(2)
+        
+        df_pie_fac = df_est.groupby("Sector")["TOTAL"].sum().reset_index(name="Facturacion").sort_values("Facturacion", ascending=False)
+        df_pie_vol = df_est.groupby("Sector").size().reset_index(name="Volumen").sort_values("Volumen", ascending=False)
+        
+        with pc1:
+            fig_pie_fac = px.pie(
+                df_pie_fac, names="Sector", values="Facturacion", hole=0.45,
+            )
+            fig_pie_fac.update_traces(
+                textinfo="percent+label",
+                hovertemplate="<b>%{label}</b><br>Facturación: ₲%{value:,.0f}<br>%{percent}<extra></extra>",
+            )
+            fig_pie_fac.update_layout(**PLOTLY_LAYOUT, title="Participación en Facturación", height=400, showlegend=False)
+            st.plotly_chart(fig_pie_fac, use_container_width=True, key="est_pie_fac")
+
+        with pc2:
+            fig_pie_vol = px.pie(
+                df_pie_vol, names="Sector", values="Volumen", hole=0.45,
+            )
+            fig_pie_vol.update_traces(
+                textinfo="percent+label",
+                hovertemplate="<b>%{label}</b><br>Volumen: %{value:,}<br>%{percent}<extra></extra>",
+            )
+            fig_pie_vol.update_layout(**PLOTLY_LAYOUT, title="Participación en Volumen", height=400, showlegend=False)
+            st.plotly_chart(fig_pie_vol, use_container_width=True, key="est_pie_vol")
+
+    st.markdown("---")
+
+    # ───────────────────────────────────────────────────────────────────
+    # SECCIÓN 4: Evolución mensual por modalidad seleccionada
+    # ───────────────────────────────────────────────────────────────────
+    if has_sector and "Fecha" in df_est.columns:
+        st.markdown("#### 📈 Evolución Mensual por Modalidad")
+        
+        df_evo_sec = (
+            df_est.groupby([pd.Grouper(key="Fecha", freq="ME"), "Sector"])
+            .size()
+            .reset_index(name="Volumen")
+        )
+        df_evo_sec["Periodo"] = df_evo_sec["Fecha"].dt.strftime("%Y-%m")
+        
+        fig_evo_sec = px.line(
+            df_evo_sec, x="Periodo", y="Volumen", color="Sector",
+            markers=True,
+        )
+        fig_evo_sec.update_layout(
+            **PLOTLY_LAYOUT,
+            title="Tendencia de Volumen por Modalidad",
+            xaxis=dict(title="Período", gridcolor="rgba(48,54,61,0.4)"),
+            yaxis=dict(title="Cantidad de Estudios", gridcolor="rgba(48,54,61,0.4)"),
+            height=400,
+            legend=dict(orientation="h", y=-0.2),
+        )
+        st.plotly_chart(fig_evo_sec, use_container_width=True, key="est_evo_sec")
 
 # ── TAB 9 — Panel Admin ────────────────────────────────────────────────────
 if user_role == "admin":
