@@ -16,9 +16,9 @@ st.set_page_config(
 )
 
 # Premium dark theme via CSS injection
+st.markdown('<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">', unsafe_allow_html=True)
 st.markdown("""
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
 
 :root {
     --bg-primary: #0e1117;
@@ -535,10 +535,12 @@ if file_to_load is None:
     st.stop()
 
 # ──────────────────────────────────────────────────────────────────────────────
-# LOAD & FILTER
+# LOAD & FILTER  (optimized: no df.copy, vectorized masks, lightweight widgets)
 # ──────────────────────────────────────────────────────────────────────────────
 df = load_data(file_to_load)
-df_filtered = df.copy()
+
+# Build a single boolean mask instead of copying and re-filtering the whole DF
+mask = pd.Series(True, index=df.index)
 
 with st.sidebar:
     st.markdown("---")
@@ -548,10 +550,7 @@ with st.sidebar:
     if "Fecha" in df.columns and df["Fecha"].notna().any():
         min_d = df["Fecha"].min().date()
         max_d = df["Fecha"].max().date()
-        
-        # Definir como mes por omisión el último disponible cargado
         default_start = max_d.replace(day=1)
-        
         rango = st.date_input(
             "📅 Rango de Fechas",
             value=[default_start, max_d],
@@ -561,41 +560,33 @@ with st.sidebar:
         if len(rango) == 2:
             start_ts = pd.to_datetime(rango[0])
             end_ts = pd.to_datetime(rango[1]) + pd.Timedelta(days=1, microseconds=-1)
-            df_filtered = df_filtered[
-                (df_filtered["Fecha"] >= start_ts)
-                & (df_filtered["Fecha"] <= end_ts)
-            ]
+            mask = mask & (df["Fecha"] >= start_ts) & (df["Fecha"] <= end_ts)
 
-    # Mes
-    if "Mes" in df.columns:
-        meses_disp = sorted(df["Mes"].dropna().unique())
-        sel_meses = st.multiselect("🗓️ Mes", meses_disp, default=meses_disp)
-        if sel_meses:
-            df_filtered = df_filtered[df_filtered["Mes"].isin(sel_meses)]
-
-    # Sector
+    # Sector — selectbox para excluir (ligero, sin hashear listas enormes)
     if "Sector" in df.columns:
-        sectores = sorted(df["Sector"].dropna().unique())
-        sel_sectores = st.multiselect("🏷️ Sector", sectores, default=sectores)
-        if sel_sectores:
-            df_filtered = df_filtered[df_filtered["Sector"].isin(sel_sectores)]
+        sectores = ["Todos"] + sorted(df["Sector"].dropna().unique().tolist())
+        sel_sector = st.selectbox("🏷️ Filtrar Sector", sectores, index=0)
+        if sel_sector != "Todos":
+            mask = mask & (df["Sector"] == sel_sector)
 
     # Seguro
     if "Seguro" in df.columns:
-        seguros = sorted(df["Seguro"].dropna().unique())
-        sel_seguros = st.multiselect("🛡️ Seguro", seguros, default=seguros)
-        if sel_seguros:
-            df_filtered = df_filtered[df_filtered["Seguro"].isin(sel_seguros)]
+        seguros = ["Todos"] + sorted(df["Seguro"].dropna().unique().tolist())
+        sel_seguro = st.selectbox("🛡️ Filtrar Seguro", seguros, index=0)
+        if sel_seguro != "Todos":
+            mask = mask & (df["Seguro"] == sel_seguro)
 
     # Doctor Tratante
     if "Doctor Tratante" in df.columns:
-        doctores = sorted(df["Doctor Tratante"].dropna().unique())
-        sel_docs = st.multiselect("👨‍⚕️ Doctor Tratante", doctores, default=doctores)
-        if sel_docs:
-            df_filtered = df_filtered[df_filtered["Doctor Tratante"].isin(sel_docs)]
+        docs = ["Todos"] + sorted(df["Doctor Tratante"].dropna().unique().tolist())
+        sel_doc = st.selectbox("👨‍⚕️ Doctor Tratante", docs, index=0)
+        if sel_doc != "Todos":
+            mask = mask & (df["Doctor Tratante"] == sel_doc)
 
     st.markdown("---")
-    st.caption(f"Registros filtrados: **{len(df_filtered):,}** / {len(df):,}")
+    st.caption(f"Registros filtrados: **{mask.sum():,}** / {len(df):,}")
+
+df_filtered = df.loc[mask]
 
 # ── Empty-filter guard ───────────────────────────────────────────────────────
 if df_filtered.empty:
