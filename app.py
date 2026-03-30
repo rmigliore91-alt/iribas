@@ -500,21 +500,38 @@ CACHE_FILE_PATH = "data/last_uploaded.csv"
 with st.sidebar:
     if user_role == "admin":
         st.markdown("## 📂 Gestión de Datos (Admin)")
+        
+        modo_carga = st.radio("Acción con la base actual:", ["Sustituir Base Completa", "Sumar Nuevos Datos"], horizontal=True)
         uploaded_file = st.file_uploader(
-            "Sube un nuevo archivo CSV consolidado",
+            "Sube un nuevo archivo CSV consolidado" if modo_carga == "Sustituir Base Completa" else "Sube el CSV con pacientes/fechas nuevas",
             type=["csv"],
-            help="Sustituirá la base de datos actual para todos los usuarios."
+            help="Sustituirá la base actual por completo." if modo_carga == "Sustituir Base Completa" else "Se anexará automáticamente al final de la base principal eliminando duplicados."
         )
 
         if uploaded_file is not None:
             os.makedirs(os.path.dirname(CACHE_FILE_PATH), exist_ok=True)
-            with open(CACHE_FILE_PATH, "wb") as f:
-                f.write(uploaded_file.getbuffer())
-            file_to_load = uploaded_file
-            auth.log_action(user_email, "Subió un nuevo archivo CSV")
+            if modo_carga == "Sustituir Base Completa":
+                with open(CACHE_FILE_PATH, "wb") as f:
+                    f.write(uploaded_file.getbuffer())
+                file_to_load = uploaded_file
+                auth.log_action(user_email, "Subió un nuevo archivo CSV sustituto")
+            else:
+                with st.spinner("Anexando datos a la base principal y optimizando duplicados..."):
+                    base_path = CACHE_FILE_PATH if os.path.exists(CACHE_FILE_PATH) else ("data/dataset_base.zip" if os.path.exists("data/dataset_base.zip") else None)
+                    if base_path:
+                        df_base = pd.read_csv(base_path, encoding="utf-8-sig", low_memory=False)
+                        df_new = pd.read_csv(uploaded_file, encoding="utf-8-sig", low_memory=False)
+                        df_concat = pd.concat([df_base, df_new], ignore_index=True).drop_duplicates()
+                        df_concat.to_csv(CACHE_FILE_PATH, index=False, encoding="utf-8-sig")
+                    else:
+                        with open(CACHE_FILE_PATH, "wb") as f:
+                            f.write(uploaded_file.getbuffer())
+                file_to_load = CACHE_FILE_PATH
+                st.success("¡Datos anexados perfectamente!")
+                auth.log_action(user_email, "Anexó nuevos datos al CSV base")
         elif os.path.exists(CACHE_FILE_PATH):
             file_to_load = CACHE_FILE_PATH
-            st.success("✅ Base de datos activa y en línea.")
+            st.success("✅ Base de datos unificada en memoria temporal.")
         elif os.path.exists("data/dataset_base.zip"):
             file_to_load = "data/dataset_base.zip"
             st.success("✅ Base de datos predeterminada activa.")
@@ -523,11 +540,17 @@ with st.sidebar:
             
         if file_to_load is not None:
             st.markdown("---")
-            if st.button("🗑️ Borrar Datos y Reiniciar App"):
+            c_btn1, c_btn2 = st.columns(2)
+            if c_btn1.button("🗑️ Borrar Temporales y Restablecer", use_container_width=True):
                 if os.path.exists(CACHE_FILE_PATH):
                     os.remove(CACHE_FILE_PATH)
-                auth.log_action(user_email, "Eliminó la base de datos CSV")
+                st.cache_data.clear()
+                auth.log_action(user_email, "Reinició temporal de la base de datos CSV")
                 st.rerun()
+            
+            if os.path.exists(CACHE_FILE_PATH):
+                with open(CACHE_FILE_PATH, "rb") as f:
+                    c_btn2.download_button("💾 Descargar Base Unida (Master)", data=f, file_name="Iribas_Base_Sumada.csv", mime="text/csv", use_container_width=True)
     else:
         st.markdown("## 📂 Estado de Datos")
         if os.path.exists(CACHE_FILE_PATH):
