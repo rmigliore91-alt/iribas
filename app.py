@@ -2367,17 +2367,17 @@ if user_role == "admin":
         st.markdown("#### 🔗 Fusión de Médicos Duplicados")
         st.markdown("Si ves al mismo médico escrito de varias formas (ej. *'CELSO FRETES'* y *'CELSO FRETES RAMIREZ'*), puedes unificarlos permanentemente a un solo nombre.")
         
+        aliases_file = "data/aliases_medicos.json"
+        aliases_actuales = {}
+        if os.path.exists(aliases_file):
+            try:
+                with open(aliases_file, "r", encoding="utf-8") as f:
+                    aliases_actuales = json.load(f)
+            except Exception:
+                pass
+
         if "Doctor Tratante" in df.columns:
             doctores_unicos = sorted(df["Doctor Tratante"].dropna().unique().tolist())
-            
-            aliases_file = "data/aliases_medicos.json"
-            aliases_actuales = {}
-            if os.path.exists(aliases_file):
-                try:
-                    with open(aliases_file, "r", encoding="utf-8") as f:
-                        aliases_actuales = json.load(f)
-                except Exception:
-                    pass
             
             c_fus1, c_fus2, c_fus3 = st.columns([2, 2, 1])
             with c_fus1:
