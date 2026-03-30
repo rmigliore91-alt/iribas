@@ -446,6 +446,7 @@ tab_titles = [
     "🛡️ Ranking Seguros",
     "⚖️ Comparativa",
     "🔎 Análisis de Estudios",
+    "💎 Micro-Rentabilidad y Caja",
 ]
 
 if user_role == "admin":
@@ -464,7 +465,8 @@ tab6 = current_tab == tab_titles[5]
 tab7 = current_tab == tab_titles[6]
 tab8 = current_tab == tab_titles[7]
 tab10 = current_tab == tab_titles[8]
-tab9 = current_tab == tab_titles[9] if user_role == "admin" else False
+tab11 = current_tab == tab_titles[9]
+tab9 = current_tab == tab_titles[10] if user_role == "admin" else False
 
 # ──────────────────────────────────────────────────────────────────────────────
 # SIDEBAR – DATA UPLOAD & FILTERS
@@ -1900,6 +1902,425 @@ if tab10:
             legend=dict(orientation="h", y=-0.2),
         )
         st.plotly_chart(fig_evo_sec, use_container_width=True, key="est_evo_sec")
+
+# ── TAB 11 — Micro-Rentabilidad y Caja ─────────────────────────────────────
+if tab11:
+    st.markdown("### 💎 Micro-Rentabilidad y Caja")
+    st.markdown("Análisis detallado de insumos, métodos de pago, rentabilidad por estudio e impacto de descuentos.")
+
+    # ── Data cleansing for financial micro-columns ───────────────────────
+    _micro_cols = {
+        "Insumos": "Insumos",
+        "Total a Pagar Insumos Seguro": "Ins_Seguro",
+        "Total a Pagar Insumos Paciente": "Ins_Paciente",
+        "Descuento": "Descuento",
+    }
+    df_micro = df_filtered.copy()
+    for orig, alias in _micro_cols.items():
+        if orig in df_micro.columns:
+            df_micro[alias] = pd.to_numeric(df_micro[orig], errors="coerce").fillna(0)
+        else:
+            df_micro[alias] = 0
+
+    # ── Sub-tabs for organized navigation ────────────────────────────────
+    st11_cows, st11_insumos, st11_flujo, st11_desc = st.tabs([
+        "🐄 Cash Cows",
+        "🧪 Insumos y Cobertura",
+        "💳 Flujo de Caja",
+        "🏷️ Impacto de Descuentos",
+    ])
+
+    # ════════════════════════════════════════════════════════════════════
+    # 11A — TOP 10 ESTUDIOS "CASH COWS"
+    # ════════════════════════════════════════════════════════════════════
+    with st11_cows:
+        st.markdown("#### 🐄 Top 10 Estudios Generadores de Ingreso")
+        st.markdown("Los estudios que más contribuyen a la facturación bruta de la clínica.")
+
+        has_estudio_m = "Estudio" in df_micro.columns
+        has_total_m = "TOTAL" in df_micro.columns
+        group_cow = "Estudio" if has_estudio_m else ("Sector" if "Sector" in df_micro.columns else None)
+
+        if group_cow and has_total_m:
+            df_cows = (
+                df_micro.groupby(group_cow)
+                .agg(
+                    Ingresos=("TOTAL", "sum"),
+                    Volumen=(group_cow, "count"),
+                )
+                .reset_index()
+                .sort_values("Ingresos", ascending=False)
+                .head(10)
+            )
+            df_cows["Ticket_Prom"] = df_cows["Ingresos"] / df_cows["Volumen"]
+
+            # KPIs
+            cow_total = df_cows["Ingresos"].sum()
+            cow_vol = df_cows["Volumen"].sum()
+            cow_ticket = cow_total / cow_vol if cow_vol else 0
+            ck1, ck2, ck3 = st.columns(3)
+            ck1.metric("💵 Ingreso Top 10", f"₲ {cow_total:,.0f}")
+            ck2.metric("📋 Volumen Top 10", f"{cow_vol:,}")
+            ck3.metric("🎫 Ticket Prom. Top 10", f"₲ {cow_ticket:,.0f}")
+
+            st.markdown("---")
+
+            # Horizontal bar chart
+            df_cows_chart = df_cows.sort_values("Ingresos", ascending=True)
+            fig_cows = go.Figure()
+            fig_cows.add_trace(go.Bar(
+                y=df_cows_chart[group_cow],
+                x=df_cows_chart["Ingresos"],
+                orientation="h",
+                text=df_cows_chart.apply(
+                    lambda r: f"₲{r['Ingresos']:,.0f}  ({int(r['Volumen']):,} est.)", axis=1
+                ),
+                textposition="outside",
+                textfont=dict(size=11),
+                marker=dict(
+                    color=df_cows_chart["Ingresos"],
+                    colorscale=[[0, "#264C8D"], [0.5, "#A11C32"], [1, "#f0883e"]],
+                    line=dict(width=0),
+                ),
+                hovertemplate=(
+                    "<b>%{y}</b><br>"
+                    "Ingreso: ₲%{x:,.0f}<br>"
+                    "Volumen: %{customdata[0]:,}<br>"
+                    "Ticket Prom: ₲%{customdata[1]:,.0f}"
+                    "<extra></extra>"
+                ),
+                customdata=df_cows_chart[["Volumen", "Ticket_Prom"]].values,
+            ))
+            fig_cows.update_layout(
+                **PLOTLY_LAYOUT,
+                title=None,
+                height=max(420, len(df_cows_chart) * 48),
+                yaxis=dict(title=""),
+                xaxis=dict(title="Ingresos (₲)", gridcolor="rgba(48,54,61,0.4)"),
+            )
+            st.plotly_chart(fig_cows, use_container_width=True, key="micro_cows")
+
+            # Summary table
+            with st.expander("📋 Tabla completa Cash Cows", expanded=False):
+                df_cows_tbl = df_cows.copy()
+                df_cows_tbl["Ingresos"] = df_cows_tbl["Ingresos"].apply(lambda v: f"₲ {v:,.0f}")
+                df_cows_tbl["Ticket_Prom"] = df_cows_tbl["Ticket_Prom"].apply(lambda v: f"₲ {v:,.0f}")
+                st.dataframe(
+                    df_cows_tbl.rename(columns={"Ticket_Prom": "Ticket Promedio"}),
+                    use_container_width=True, hide_index=True,
+                )
+        else:
+            st.info("Columnas 'Estudio' (o 'Sector') y 'TOTAL' necesarias para este análisis.")
+
+    # ════════════════════════════════════════════════════════════════════
+    # 11B — ANÁLISIS DE INSUMOS Y COBERTURA
+    # ════════════════════════════════════════════════════════════════════
+    with st11_insumos:
+        st.markdown("#### 🧪 Análisis de Insumos y Cobertura")
+        st.markdown("¿Quién absorbe el costo de los materiales (ej. contrastes)? ¿El seguro o el paciente?")
+
+        total_insumos = df_micro["Insumos"].sum()
+        total_ins_seguro = df_micro["Ins_Seguro"].sum()
+        total_ins_paciente = df_micro["Ins_Paciente"].sum()
+
+        # KPIs
+        ik1, ik2, ik3 = st.columns(3)
+        ik1.metric("🧪 Gasto Bruto en Insumos", f"₲ {total_insumos:,.0f}")
+        ik2.metric("🛡️ Cubierto por Seguro", f"₲ {total_ins_seguro:,.0f}")
+        ik3.metric("👤 A cargo del Paciente", f"₲ {total_ins_paciente:,.0f}")
+
+        st.markdown("---")
+
+        col_ins_a, col_ins_b = st.columns(2)
+
+        with col_ins_a:
+            # Donut: Seguro vs Paciente coverage
+            df_ins_split = pd.DataFrame({
+                "Pagador": ["Seguro Médico", "Paciente"],
+                "Monto": [total_ins_seguro, total_ins_paciente],
+            })
+            # Filter out zero rows for cleaner chart
+            df_ins_split = df_ins_split[df_ins_split["Monto"] > 0]
+
+            if not df_ins_split.empty:
+                fig_ins_donut = px.pie(
+                    df_ins_split, names="Pagador", values="Monto", hole=0.45,
+                    color="Pagador",
+                    color_discrete_map={"Seguro Médico": "#58a6ff", "Paciente": "#f0883e"},
+                )
+                fig_ins_donut.update_layout(
+                    **PLOTLY_LAYOUT, title="Cobertura de Insumos",
+                    height=400, showlegend=True,
+                    legend=dict(orientation="h", y=-0.1, x=0.5, xanchor="center"),
+                )
+                fig_ins_donut.update_traces(
+                    textinfo="percent+value", textfont_size=13,
+                    texttemplate="%{percent}<br>₲%{value:,.0f}",
+                    hovertemplate="<b>%{label}</b><br>Monto: ₲%{value:,.0f}<br>%{percent}<extra></extra>",
+                )
+                st.plotly_chart(fig_ins_donut, use_container_width=True, key="micro_ins_donut")
+            else:
+                st.info("No hay datos de insumos con valores > 0.")
+
+        with col_ins_b:
+            # Stacked bar by Sector if available
+            if "Sector" in df_micro.columns:
+                df_ins_sec = (
+                    df_micro.groupby("Sector")
+                    .agg(
+                        Seguro=("Ins_Seguro", "sum"),
+                        Paciente=("Ins_Paciente", "sum"),
+                    )
+                    .reset_index()
+                )
+                df_ins_sec = df_ins_sec[(df_ins_sec["Seguro"] > 0) | (df_ins_sec["Paciente"] > 0)]
+
+                if not df_ins_sec.empty:
+                    df_ins_melt = df_ins_sec.melt(
+                        id_vars="Sector", value_vars=["Seguro", "Paciente"],
+                        var_name="Pagador", value_name="Monto",
+                    )
+                    fig_ins_stack = px.bar(
+                        df_ins_melt, x="Sector", y="Monto", color="Pagador",
+                        barmode="stack", text="Monto",
+                        color_discrete_map={"Seguro": "#58a6ff", "Paciente": "#f0883e"},
+                    )
+                    fig_ins_stack.update_traces(
+                        texttemplate="₲%{text:,.0f}", textposition="inside", textfont_size=10,
+                        hovertemplate="<b>%{x}</b><br>%{data.name}: ₲%{y:,.0f}<extra></extra>",
+                    )
+                    fig_ins_stack.update_layout(
+                        **PLOTLY_LAYOUT, title="Insumos por Sector — Seguro vs. Paciente",
+                        height=400,
+                        xaxis=dict(title="", tickangle=-35),
+                        yaxis=dict(title="Monto (₲)", gridcolor="rgba(48,54,61,0.4)"),
+                        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5),
+                    )
+                    st.plotly_chart(fig_ins_stack, use_container_width=True, key="micro_ins_stack")
+                else:
+                    st.info("Sin datos de insumos por sector con valores > 0.")
+            else:
+                st.info("Columna 'Sector' no disponible para desglose.")
+
+    # ════════════════════════════════════════════════════════════════════
+    # 11C — FLUJO DE CAJA (MÉTODOS DE PAGO)
+    # ════════════════════════════════════════════════════════════════════
+    with st11_flujo:
+        st.markdown("#### 💳 Flujo de Caja — Distribución por Método de Pago")
+        st.markdown("Visualiza la liquidez de la clínica según los distintos canales de cobro.")
+
+        has_metodo = "Método de Pago" in df_micro.columns
+        has_total_f = "TOTAL" in df_micro.columns
+
+        if has_metodo and has_total_f:
+            df_pago = (
+                df_micro.groupby("Método de Pago")
+                .agg(
+                    Ingreso=("TOTAL", "sum"),
+                    Operaciones=("TOTAL", "count"),
+                )
+                .reset_index()
+                .sort_values("Ingreso", ascending=False)
+            )
+
+            # KPIs
+            n_metodos = len(df_pago)
+            top_metodo = df_pago.iloc[0]["Método de Pago"] if len(df_pago) else "-"
+            top_metodo_pct = (
+                df_pago.iloc[0]["Ingreso"] / df_pago["Ingreso"].sum() * 100
+                if len(df_pago) and df_pago["Ingreso"].sum() > 0 else 0
+            )
+            fk1, fk2, fk3 = st.columns(3)
+            fk1.metric("💳 Métodos de Pago", f"{n_metodos}")
+            fk2.metric("🏆 Canal Principal", f"{top_metodo}")
+            fk3.metric("📊 Participación Líder", f"{top_metodo_pct:.1f}%")
+
+            st.markdown("---")
+
+            col_f1, col_f2 = st.columns(2)
+
+            with col_f1:
+                # Donut chart
+                fig_pago_donut = px.pie(
+                    df_pago, names="Método de Pago", values="Ingreso", hole=0.5,
+                    color_discrete_sequence=[
+                        "#3fb950", "#58a6ff", "#f0883e", "#bc8cff",
+                        "#f778ba", "#79c0ff", "#ffa657", "#ff7b72",
+                    ],
+                )
+                fig_pago_donut.update_layout(
+                    **PLOTLY_LAYOUT, title="Distribución de Ingresos",
+                    height=420, showlegend=True,
+                    legend=dict(orientation="h", y=-0.15, x=0.5, xanchor="center"),
+                )
+                fig_pago_donut.update_traces(
+                    textinfo="percent+label", textfont_size=11,
+                    texttemplate="%{label}<br>%{percent}",
+                    hovertemplate="<b>%{label}</b><br>Ingreso: ₲%{value:,.0f}<br>%{percent}<extra></extra>",
+                )
+                st.plotly_chart(fig_pago_donut, use_container_width=True, key="micro_pago_donut")
+
+            with col_f2:
+                # Bar chart for detail
+                df_pago_bar = df_pago.sort_values("Ingreso", ascending=True)
+                fig_pago_bar = px.bar(
+                    df_pago_bar, y="Método de Pago", x="Ingreso", orientation="h",
+                    text="Ingreso", color="Ingreso",
+                    color_continuous_scale=["#1a1e2e", "#3fb950"],
+                )
+                fig_pago_bar.update_traces(
+                    texttemplate="₲%{text:,.0f}", textposition="outside", textfont_size=11,
+                    hovertemplate=(
+                        "<b>%{y}</b><br>"
+                        "Ingreso: ₲%{x:,.0f}<extra></extra>"
+                    ),
+                )
+                fig_pago_bar.update_layout(
+                    **PLOTLY_LAYOUT, title="Ingreso por Canal",
+                    height=max(350, len(df_pago_bar) * 45),
+                    yaxis=dict(title=""),
+                    xaxis=dict(title="Ingresos (₲)", gridcolor="rgba(48,54,61,0.4)"),
+                    coloraxis_showscale=False,
+                )
+                st.plotly_chart(fig_pago_bar, use_container_width=True, key="micro_pago_bar")
+
+            # Summary table
+            with st.expander("📋 Detalle por Método de Pago", expanded=False):
+                df_pago_tbl = df_pago.copy()
+                df_pago_tbl["% Participación"] = (
+                    df_pago_tbl["Ingreso"] / df_pago_tbl["Ingreso"].sum() * 100
+                ).apply(lambda v: f"{v:.1f}%")
+                df_pago_tbl["Ingreso"] = df_pago_tbl["Ingreso"].apply(lambda v: f"₲ {v:,.0f}")
+                st.dataframe(df_pago_tbl, use_container_width=True, hide_index=True)
+        else:
+            st.info("Columna 'Método de Pago' o 'TOTAL' no disponible para este análisis.")
+
+    # ════════════════════════════════════════════════════════════════════
+    # 11D — IMPACTO DE DESCUENTOS
+    # ════════════════════════════════════════════════════════════════════
+    with st11_desc:
+        st.markdown("#### 🏷️ Impacto de Descuentos Comerciales")
+        st.markdown("Cuantifica el dinero cedido en descuentos y dónde se concentran las rebajas.")
+
+        total_descuento = df_micro["Descuento"].sum()
+        total_rev_desc = df_micro["TOTAL"].sum() if "TOTAL" in df_micro.columns else 0
+        pct_desc = (total_descuento / total_rev_desc * 100) if total_rev_desc > 0 else 0
+        n_con_desc = (df_micro["Descuento"] > 0).sum()
+        pct_estudios_desc = (n_con_desc / len(df_micro) * 100) if len(df_micro) > 0 else 0
+
+        dk1, dk2, dk3, dk4 = st.columns(4)
+        dk1.metric("🏷️ Total Descuentos", f"₲ {total_descuento:,.0f}")
+        dk2.metric("📉 % sobre Facturación", f"{pct_desc:.2f}%")
+        dk3.metric("📋 Estudios con Descuento", f"{n_con_desc:,}")
+        dk4.metric("📊 % Estudios con Desc.", f"{pct_estudios_desc:.1f}%")
+
+        st.markdown("---")
+
+        # Sub-tabs: by Sector vs by Month
+        desc_tab_sector, desc_tab_mes = st.tabs(["🏢 Por Sector", "📅 Por Mes"])
+
+        with desc_tab_sector:
+            if "Sector" in df_micro.columns:
+                df_desc_sec = (
+                    df_micro[df_micro["Descuento"] > 0]
+                    .groupby("Sector")
+                    .agg(
+                        Total_Descuento=("Descuento", "sum"),
+                        Cantidad=("Descuento", "count"),
+                    )
+                    .reset_index()
+                    .sort_values("Total_Descuento", ascending=False)
+                )
+
+                if not df_desc_sec.empty:
+                    fig_desc_sec = px.bar(
+                        df_desc_sec.sort_values("Total_Descuento", ascending=True),
+                        y="Sector", x="Total_Descuento", orientation="h",
+                        text="Total_Descuento", color="Total_Descuento",
+                        color_continuous_scale=[[0, "#1f3a5f"], [0.5, "#bc8cff"], [1, "#f778ba"]],
+                    )
+                    fig_desc_sec.update_traces(
+                        texttemplate="₲%{text:,.0f}", textposition="outside", textfont_size=11,
+                        hovertemplate=(
+                            "<b>%{y}</b><br>"
+                            "Descuentos: ₲%{x:,.0f}<br>"
+                            "Operaciones: %{customdata[0]:,}"
+                            "<extra></extra>"
+                        ),
+                        customdata=df_desc_sec.sort_values("Total_Descuento", ascending=True)[["Cantidad"]].values,
+                    )
+                    fig_desc_sec.update_layout(
+                        **PLOTLY_LAYOUT, title="Descuentos por Sector",
+                        height=max(380, len(df_desc_sec) * 45),
+                        yaxis=dict(title=""),
+                        xaxis=dict(title="Descuento Total (₲)", gridcolor="rgba(48,54,61,0.4)"),
+                        coloraxis_showscale=False,
+                    )
+                    st.plotly_chart(fig_desc_sec, use_container_width=True, key="micro_desc_sec")
+                else:
+                    st.info("No se encontraron descuentos en el período filtrado.")
+            else:
+                st.info("Columna 'Sector' no disponible.")
+
+        with desc_tab_mes:
+            if "Fecha" in df_micro.columns and df_micro["Fecha"].notna().any():
+                df_desc_mes = (
+                    df_micro[df_micro["Descuento"] > 0]
+                    .groupby(pd.Grouper(key="Fecha", freq="ME"))
+                    .agg(
+                        Total_Descuento=("Descuento", "sum"),
+                        Cantidad=("Descuento", "count"),
+                    )
+                    .reset_index()
+                )
+                df_desc_mes["Periodo"] = df_desc_mes["Fecha"].dt.strftime("%Y-%m")
+
+                if not df_desc_mes.empty:
+                    fig_desc_mes = go.Figure()
+                    fig_desc_mes.add_trace(go.Bar(
+                        x=df_desc_mes["Periodo"],
+                        y=df_desc_mes["Total_Descuento"],
+                        name="Descuento",
+                        marker=dict(
+                            color=df_desc_mes["Total_Descuento"],
+                            colorscale=[[0, "#1f3a5f"], [0.5, "#bc8cff"], [1, "#f778ba"]],
+                            line=dict(width=0),
+                        ),
+                        text=df_desc_mes["Total_Descuento"].apply(lambda v: f"₲{v:,.0f}"),
+                        textposition="outside",
+                        textfont=dict(size=11),
+                        hovertemplate=(
+                            "<b>%{x}</b><br>"
+                            "Descuento: ₲%{y:,.0f}<br>"
+                            "Operaciones: %{customdata[0]:,}"
+                            "<extra></extra>"
+                        ),
+                        customdata=df_desc_mes[["Cantidad"]].values,
+                    ))
+                    fig_desc_mes.add_trace(go.Scatter(
+                        x=df_desc_mes["Periodo"],
+                        y=df_desc_mes["Cantidad"],
+                        name="Operaciones con Desc.",
+                        mode="lines+markers",
+                        line=dict(color="#f0883e", width=3, dash="dot"),
+                        marker=dict(size=8, symbol="diamond"),
+                        yaxis="y2",
+                        hovertemplate="<b>%{x}</b><br>Operaciones: %{y:,}<extra></extra>",
+                    ))
+                    fig_desc_mes.update_layout(
+                        **PLOTLY_LAYOUT, title="Evolución Mensual de Descuentos",
+                        height=450,
+                        yaxis=dict(title="Descuento (₲)", gridcolor="rgba(48,54,61,0.4)"),
+                        yaxis2=dict(title="Operaciones", overlaying="y", side="right",
+                                    gridcolor="rgba(48,54,61,0.1)"),
+                        xaxis=dict(gridcolor="rgba(48,54,61,0.4)"),
+                        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5),
+                    )
+                    st.plotly_chart(fig_desc_mes, use_container_width=True, key="micro_desc_mes")
+                else:
+                    st.info("No se encontraron descuentos en el período filtrado.")
+            else:
+                st.info("Columna 'Fecha' no disponible para evolución temporal.")
 
 # ── TAB 9 — Panel Admin ────────────────────────────────────────────────────
 if user_role == "admin":
