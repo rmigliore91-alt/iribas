@@ -515,6 +515,9 @@ with st.sidebar:
         elif os.path.exists(CACHE_FILE_PATH):
             file_to_load = CACHE_FILE_PATH
             st.success("✅ Base de datos activa y en línea.")
+        elif os.path.exists("data/dataset_base.zip"):
+            file_to_load = "data/dataset_base.zip"
+            st.success("✅ Base de datos predeterminada activa.")
         else:
             file_to_load = None
             
@@ -530,6 +533,9 @@ with st.sidebar:
         if os.path.exists(CACHE_FILE_PATH):
             file_to_load = CACHE_FILE_PATH
             st.success("✅ Base de datos activa y en línea.")
+        elif os.path.exists("data/dataset_base.zip"):
+            file_to_load = "data/dataset_base.zip"
+            st.success("✅ Base de datos predeterminada activa.")
         else:
             file_to_load = None
             st.warning("⚠️ El administrador aún no ha cargado los datos.")
