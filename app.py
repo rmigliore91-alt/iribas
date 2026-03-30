@@ -2399,15 +2399,44 @@ if user_role == "admin":
                     else:
                         st.warning("Selecciones inválidas.")
             
-            if aliases_actuales:
-                with st.expander("🛠️ Ver Fusiones Activas (Historial y Deshacer)", expanded=False):
-                    for origen, destino in list(aliases_actuales.items()):
-                        c_li1, c_li2 = st.columns([4, 1])
-                        c_li1.write(f"🗑️ Eliminado: `{origen}` ➡️ 🎯 Operando como: `{destino}`")
-                        if c_li2.button("Deshacer", key=f"del_{origen}", use_container_width=True):
-                            del aliases_actuales[origen]
-                            with open(aliases_file, "w", encoding="utf-8") as f:
-                                json.dump(aliases_actuales, f, indent=4)
-                            st.cache_data.clear()
-                            st.rerun()
+        st.markdown("---")
+        st.markdown("#### 🔗 Fusión de Médicos Radiólogos (Informantes)")
+        st.markdown("Si ves al mismo radiólogo escrito de varias formas, puedes unificarlos permanentemente a un solo nombre.")
+        
+        if "Doctor Informante" in df.columns:
+            radiologos_unicos = sorted(df["Doctor Informante"].dropna().unique().tolist())
+            
+            c_fus1_r, c_fus2_r, c_fus3_r = st.columns([2, 2, 1])
+            with c_fus1_r:
+                doc_destino_r = st.selectbox("1️⃣ Nombre que se MANTENDRÁ (Final)", ["Selecciona..."] + radiologos_unicos, key="dest_rad")
+            with c_fus2_r:
+                doc_origen_r = st.selectbox("2️⃣ Nombre a ELIMINAR/FUSIONAR (Extra)", ["Selecciona..."] + radiologos_unicos, key="orig_rad")
+            with c_fus3_r:
+                st.markdown("<br>", unsafe_allow_html=True)
+                if st.button("Fusionar y Aplicar", use_container_width=True, type="primary", key="btn_rad"):
+                    if doc_destino_r != "Selecciona..." and doc_origen_r != "Selecciona..." and doc_destino_r != doc_origen_r:
+                        aliases_actuales[doc_origen_r] = doc_destino_r
+                        with open(aliases_file, "w", encoding="utf-8") as f:
+                            json.dump(aliases_actuales, f, indent=4)
+                        st.success(f"¡Fusionado! '{doc_origen_r}' operará como '{doc_destino_r}'.")
+                        st.cache_data.clear()
+                        st.rerun()
+                    elif doc_destino_r == doc_origen_r and doc_destino_r != "Selecciona...":
+                        st.warning("Ambos nombres son iguales.")
+                    else:
+                        st.warning("Selecciones inválidas.")
+
+        if aliases_actuales:
+            st.markdown("---")
+            with st.expander("🛠️ Ver TODAS las Fusiones Activas (Historial y Deshacer)", expanded=False):
+                st.info("Aquí aparecen todos los nombres que han sido fusionados, tanto médicos tratantes como radiólogos.")
+                for origen, destino in list(aliases_actuales.items()):
+                    c_li1, c_li2 = st.columns([4, 1])
+                    c_li1.write(f"🗑️ Eliminado: `{origen}` ➡️ 🎯 Operando como: `{destino}`")
+                    if c_li2.button("Deshacer", key=f"del_{origen}", use_container_width=True):
+                        del aliases_actuales[origen]
+                        with open(aliases_file, "w", encoding="utf-8") as f:
+                            json.dump(aliases_actuales, f, indent=4)
+                        st.cache_data.clear()
+                        st.rerun()
 
