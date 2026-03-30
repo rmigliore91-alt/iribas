@@ -3,6 +3,7 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 import os
+import json
 import auth
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -334,6 +335,29 @@ def load_data(file):
     # ── Normalize Doctor Informante to uppercase ─────────────────────────
     if "Doctor Informante" in df.columns:
         df["Doctor Informante"] = df["Doctor Informante"].str.upper().str.strip()
+    if "Doctor Tratante" in df.columns:
+        df["Doctor Tratante"] = df["Doctor Tratante"].str.upper().str.strip()
+
+    # ── Apply Aliases (Médicos Fusionados) ──────────────────────────────
+    aliases_path = "data/aliases_medicos.json"
+    if os.path.exists(aliases_path):
+        try:
+            with open(aliases_path, "r", encoding="utf-8") as f:
+                aliases = json.load(f)
+            if "Doctor Tratante" in df.columns:
+                df["Doctor Tratante"] = df["Doctor Tratante"].replace(aliases)
+            if "Doctor Informante" in df.columns:
+                df["Doctor Informante"] = df["Doctor Informante"].replace(aliases)
+        except Exception:
+            pass
+
+    # ── Normalize Sector to Title Case to prevent duplicate categories ───
+    if "Sector" in df.columns:
+        df["Sector"] = df["Sector"].str.strip().str.title()
+        # Restore specific acronyms that should be uppercase
+        df["Sector"] = df["Sector"].replace({
+            "Pap": "PAP", "Eeg": "EEG", "Ecg": "ECG", "Rmn": "RMN", "Tac": "TAC"
+        })
 
     # ── Difficulty score per study ───────────────────────────────────────
     if "Sector" in df.columns:
@@ -2338,4 +2362,52 @@ if user_role == "admin":
             st.markdown("#### 👥 Usuarios Registrados")
             users_df = auth.get_users()
             st.dataframe(users_df, use_container_width=True, hide_index=True)
+
+        st.markdown("---")
+        st.markdown("#### 🔗 Fusión de Médicos Duplicados")
+        st.markdown("Si ves al mismo médico escrito de varias formas (ej. *'CELSO FRETES'* y *'CELSO FRETES RAMIREZ'*), puedes unificarlos permanentemente a un solo nombre.")
+        
+        if "Doctor Tratante" in df.columns:
+            doctores_unicos = sorted(df["Doctor Tratante"].dropna().unique().tolist())
+            
+            aliases_file = "data/aliases_medicos.json"
+            aliases_actuales = {}
+            if os.path.exists(aliases_file):
+                try:
+                    with open(aliases_file, "r", encoding="utf-8") as f:
+                        aliases_actuales = json.load(f)
+                except Exception:
+                    pass
+            
+            c_fus1, c_fus2, c_fus3 = st.columns([2, 2, 1])
+            with c_fus1:
+                doc_destino = st.selectbox("1️⃣ Nombre que se MANTENDRÁ (Final)", ["Selecciona..."] + doctores_unicos)
+            with c_fus2:
+                doc_origen = st.selectbox("2️⃣ Nombre a ELIMINAR/FUSIONAR (Extra)", ["Selecciona..."] + doctores_unicos)
+            with c_fus3:
+                st.markdown("<br>", unsafe_allow_html=True)
+                if st.button("Fusionar y Aplicar", use_container_width=True, type="primary"):
+                    if doc_destino != "Selecciona..." and doc_origen != "Selecciona..." and doc_destino != doc_origen:
+                        aliases_actuales[doc_origen] = doc_destino
+                        with open(aliases_file, "w", encoding="utf-8") as f:
+                            json.dump(aliases_actuales, f, indent=4)
+                        st.success(f"¡Fusionado! '{doc_origen}' ahora operará como '{doc_destino}'.")
+                        st.cache_data.clear()
+                        st.rerun()
+                    elif doc_destino == doc_origen and doc_destino != "Selecciona...":
+                        st.warning("Ambos nombres son iguales. Selecciona un nombre a eliminar distinto del destino.")
+                    else:
+                        st.warning("Selecciones inválidas.")
+            
+            if aliases_actuales:
+                with st.expander("🛠️ Ver Fusiones Activas (Historial y Deshacer)", expanded=False):
+                    for origen, destino in list(aliases_actuales.items()):
+                        c_li1, c_li2 = st.columns([4, 1])
+                        c_li1.write(f"🗑️ Eliminado: `{origen}` ➡️ 🎯 Operando como: `{destino}`")
+                        if c_li2.button("Deshacer", key=f"del_{origen}", use_container_width=True):
+                            del aliases_actuales[origen]
+                            with open(aliases_file, "w", encoding="utf-8") as f:
+                                json.dump(aliases_actuales, f, indent=4)
+                            st.cache_data.clear()
+                            st.rerun()
 
