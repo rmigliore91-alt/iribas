@@ -287,7 +287,7 @@ def load_data(file):
 
     # ── Fecha: parse D/MM/YY format ──────────────────────────────────────
     if "Fecha" in df.columns:
-        df["Fecha"] = pd.to_datetime(df["Fecha"], dayfirst=True, errors="coerce")
+        df["Fecha"] = pd.to_datetime(df["Fecha"], dayfirst=True, format="mixed", errors="coerce")
         dias_map = {
             0: "Lunes", 1: "Martes", 2: "Miércoles",
             3: "Jueves", 4: "Viernes", 5: "Sábado", 6: "Domingo",
