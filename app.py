@@ -2377,18 +2377,19 @@ if user_role == "admin":
                 pass
 
         if "Doctor Tratante" in df.columns:
-            doctores_unicos = sorted(df["Doctor Tratante"].dropna().unique().tolist())
+            doctores_unicos = sorted(df["Doctor Tratante"].dropna().astype(str).unique().tolist())
             
             c_fus1, c_fus2, c_fus3 = st.columns([2, 2, 1])
             with c_fus1:
-                doc_destino = st.selectbox("1️⃣ Nombre que se MANTENDRÁ (Final)", ["Selecciona..."] + doctores_unicos)
+                doc_destino = st.selectbox("1️⃣ Nombre que se MANTENDRÁ (Final)", ["Selecciona..."] + doctores_unicos, key="dest_trat")
             with c_fus2:
-                doc_origen = st.selectbox("2️⃣ Nombre a ELIMINAR/FUSIONAR (Extra)", ["Selecciona..."] + doctores_unicos)
+                doc_origen = st.selectbox("2️⃣ Nombre a ELIMINAR/FUSIONAR (Extra)", ["Selecciona..."] + doctores_unicos, key="orig_trat")
             with c_fus3:
                 st.markdown("<br>", unsafe_allow_html=True)
-                if st.button("Fusionar y Aplicar", use_container_width=True, type="primary"):
+                if st.button("Fusionar y Aplicar", use_container_width=True, type="primary", key="btn_trat"):
                     if doc_destino != "Selecciona..." and doc_origen != "Selecciona..." and doc_destino != doc_origen:
                         aliases_actuales[doc_origen] = doc_destino
+                        os.makedirs(os.path.dirname(aliases_file), exist_ok=True)
                         with open(aliases_file, "w", encoding="utf-8") as f:
                             json.dump(aliases_actuales, f, indent=4)
                         st.success(f"¡Fusionado! '{doc_origen}' ahora operará como '{doc_destino}'.")
@@ -2404,7 +2405,7 @@ if user_role == "admin":
         st.markdown("Si ves al mismo radiólogo escrito de varias formas, puedes unificarlos permanentemente a un solo nombre.")
         
         if "Doctor Informante" in df.columns:
-            radiologos_unicos = sorted(df["Doctor Informante"].dropna().unique().tolist())
+            radiologos_unicos = sorted(df["Doctor Informante"].dropna().astype(str).unique().tolist())
             
             c_fus1_r, c_fus2_r, c_fus3_r = st.columns([2, 2, 1])
             with c_fus1_r:
@@ -2416,6 +2417,7 @@ if user_role == "admin":
                 if st.button("Fusionar y Aplicar", use_container_width=True, type="primary", key="btn_rad"):
                     if doc_destino_r != "Selecciona..." and doc_origen_r != "Selecciona..." and doc_destino_r != doc_origen_r:
                         aliases_actuales[doc_origen_r] = doc_destino_r
+                        os.makedirs(os.path.dirname(aliases_file), exist_ok=True)
                         with open(aliases_file, "w", encoding="utf-8") as f:
                             json.dump(aliases_actuales, f, indent=4)
                         st.success(f"¡Fusionado! '{doc_origen_r}' operará como '{doc_destino_r}'.")
