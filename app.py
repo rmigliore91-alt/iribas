@@ -280,11 +280,7 @@ def load_data(file):
 
     # ── Strip whitespace from all string values ─────────────────────────
     for col in df.select_dtypes(include="object").columns:
-        try:
-            df[col] = df[col].str.strip()
-        except AttributeError:
-            # Column has mixed types; convert to string, strip, restore NaN
-            df[col] = df[col].where(df[col].isna(), df[col].astype(str).str.strip())
+        df[col] = df[col].apply(lambda x: x.strip() if isinstance(x, str) else x)
 
     # ── Drop fully empty trailing columns ────────────────────────────────
     df = df.dropna(axis=1, how="all")
