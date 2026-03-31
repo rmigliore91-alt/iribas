@@ -269,15 +269,21 @@ def load_data(file):
     # ── Strip whitespace from column names ───────────────────────────────
     df.columns = df.columns.str.strip()
 
-    # ── Handle duplicate 'Hora' columns ──────────────────────────────────
-    cols = list(df.columns)
-    hora_count = 0
-    for i, c in enumerate(cols):
-        if c == "Hora":
-            hora_count += 1
-            if hora_count == 2:
-                cols[i] = "Hora_Num"
-    df.columns = cols
+    # ── Deduplicate ALL column names (append _2, _3, … to repeats) ───────
+    seen = {}
+    new_cols = []
+    for c in df.columns:
+        if c in seen:
+            seen[c] += 1
+            new_cols.append(f"{c}_{seen[c]}")
+        else:
+            seen[c] = 1
+            new_cols.append(c)
+    df.columns = new_cols
+
+    # ── Rename second Hora (now "Hora_2") to "Hora_Num" for compat ───────
+    if "Hora_2" in df.columns:
+        df = df.rename(columns={"Hora_2": "Hora_Num"})
 
     # ── Strip whitespace from all string values ─────────────────────────
     for col in df.select_dtypes(include="object").columns:
