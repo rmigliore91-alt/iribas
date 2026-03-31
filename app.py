@@ -2457,6 +2457,19 @@ if user_role == "admin":
             st.markdown("#### 👥 Usuarios Registrados")
             users_df = auth.get_users()
             st.dataframe(users_df, use_container_width=True, hide_index=True)
+            # Download users.json for permanent backup
+            users_json_path = "data/users.json"
+            if os.path.exists(users_json_path):
+                with open(users_json_path, "r", encoding="utf-8") as f:
+                    users_data = f.read()
+                st.download_button(
+                    "💾 Descargar Backup de Usuarios",
+                    data=users_data,
+                    file_name="users.json",
+                    mime="application/json",
+                    use_container_width=True,
+                )
+            st.caption("ℹ️ Los usuarios se guardan en el repositorio y persisten entre reinicios.")
 
         st.markdown("---")
         st.markdown("#### 🔗 Fusión de Médicos Duplicados")
