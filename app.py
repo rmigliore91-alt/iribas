@@ -292,9 +292,23 @@ def load_data(file):
     # ── Drop fully empty trailing columns ────────────────────────────────
     df = df.dropna(axis=1, how="all")
 
-    # ── Fecha: parse D/MM/YY format ──────────────────────────────────────
+    # ── Fecha: parse D/MM/YY or D/MM/YYYY format (always day-first) ─────
     if "Fecha" in df.columns:
-        df["Fecha"] = pd.to_datetime(df["Fecha"], dayfirst=True, format="mixed", errors="coerce")
+        # Try 4-digit year first, then 2-digit, then generic dayfirst fallback
+        parsed = pd.to_datetime(df["Fecha"], format="%d/%m/%Y", errors="coerce")
+        # Fill unparsed rows with 2-digit year attempt
+        missing = parsed.isna() & df["Fecha"].notna()
+        if missing.any():
+            parsed.loc[missing] = pd.to_datetime(
+                df.loc[missing, "Fecha"], format="%d/%m/%y", errors="coerce"
+            )
+        # Final fallback for any remaining weird formats
+        still_missing = parsed.isna() & df["Fecha"].notna()
+        if still_missing.any():
+            parsed.loc[still_missing] = pd.to_datetime(
+                df.loc[still_missing, "Fecha"], dayfirst=True, errors="coerce"
+            )
+        df["Fecha"] = parsed
         dias_map = {
             0: "Lunes", 1: "Martes", 2: "Miércoles",
             3: "Jueves", 4: "Viernes", 5: "Sábado", 6: "Domingo",
