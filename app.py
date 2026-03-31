@@ -298,23 +298,29 @@ def load_data(file):
     # ── Drop fully empty trailing columns ────────────────────────────────
     df = df.dropna(axis=1, how="all")
 
-    # ── Fecha: parse D/MM/YY or D/MM/YYYY format (always day-first) ─────
-    if "Fecha" in df.columns:
-        # Try 4-digit year first, then 2-digit, then generic dayfirst fallback
-        parsed = pd.to_datetime(df["Fecha"], format="%d/%m/%Y", errors="coerce")
-        # Fill unparsed rows with 2-digit year attempt
+    # ── Fecha: construct from Año/Mes/Dia columns (unambiguous) ────────
+    if all(c in df.columns for c in ["Año", "Mes", "Dia"]):
+        # Build dates from the explicit numeric columns — zero ambiguity
+        df["Año"] = pd.to_numeric(df["Año"], errors="coerce")
+        df["Mes"] = pd.to_numeric(df["Mes"], errors="coerce")
+        df["Dia"] = pd.to_numeric(df["Dia"], errors="coerce")
+        df["Fecha"] = pd.to_datetime(
+            df[["Año", "Mes", "Dia"]].rename(columns={"Año": "year", "Mes": "month", "Dia": "day"}),
+            errors="coerce",
+        )
+    elif "Fecha" in df.columns:
+        # Fallback: parse from Fecha string (try M/D/YY since that matches the source format)
+        parsed = pd.to_datetime(df["Fecha"], format="%m/%d/%y", errors="coerce")
+        # Then try other formats
         missing = parsed.isna() & df["Fecha"].notna()
         if missing.any():
             parsed.loc[missing] = pd.to_datetime(
-                df.loc[missing, "Fecha"], format="%d/%m/%y", errors="coerce"
-            )
-        # Final fallback for any remaining weird formats
-        still_missing = parsed.isna() & df["Fecha"].notna()
-        if still_missing.any():
-            parsed.loc[still_missing] = pd.to_datetime(
-                df.loc[still_missing, "Fecha"], dayfirst=True, errors="coerce"
+                df.loc[missing, "Fecha"], dayfirst=True, errors="coerce"
             )
         df["Fecha"] = parsed
+
+    # ── Day of week (runs for both parsing paths) ────────────────────────
+    if "Fecha" in df.columns and pd.api.types.is_datetime64_any_dtype(df["Fecha"]):
         dias_map = {
             0: "Lunes", 1: "Martes", 2: "Miércoles",
             3: "Jueves", 4: "Viernes", 5: "Sábado", 6: "Domingo",
