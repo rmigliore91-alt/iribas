@@ -245,15 +245,13 @@ def parse_guarani_number(series):
     """Convert strings like ' 97,000 ' or ' - ' to float.
     Treats comma as thousands separator (Guaraní convention).
     """
-    cleaned = (
-        series.astype(str)
-        .str.strip()
-        .str.replace("-", "", regex=False)
-        .str.replace(".", "", regex=False)    # remove thousands dots if any
-        .str.replace(",", "", regex=False)    # remove thousands commas
-        .str.replace("$", "", regex=False)
-        .str.strip()
-    )
+    def _clean(x):
+        s = str(x).strip()
+        for ch in ["-", ".", ",", "$"]:
+            s = s.replace(ch, "")
+        return s.strip()
+
+    cleaned = series.apply(_clean)
     return pd.to_numeric(cleaned, errors="coerce").fillna(0)
 
 
@@ -363,9 +361,13 @@ def load_data(file):
 
     # ── Normalize Doctor Informante to uppercase ─────────────────────────
     if "Doctor Informante" in df.columns:
-        df["Doctor Informante"] = df["Doctor Informante"].str.upper().str.strip()
+        df["Doctor Informante"] = df["Doctor Informante"].apply(
+            lambda x: str(x).upper().strip() if pd.notna(x) else x
+        )
     if "Doctor Tratante" in df.columns:
-        df["Doctor Tratante"] = df["Doctor Tratante"].str.upper().str.strip()
+        df["Doctor Tratante"] = df["Doctor Tratante"].apply(
+            lambda x: str(x).upper().strip() if pd.notna(x) else x
+        )
 
     # ── Apply Aliases (Médicos Fusionados) ──────────────────────────────
     aliases_path = "data/aliases_medicos.json"
@@ -382,7 +384,9 @@ def load_data(file):
 
     # ── Normalize Sector to Title Case to prevent duplicate categories ───
     if "Sector" in df.columns:
-        df["Sector"] = df["Sector"].str.strip().str.title()
+        df["Sector"] = df["Sector"].apply(
+            lambda x: str(x).strip().title() if pd.notna(x) else x
+        )
         # Restore specific acronyms that should be uppercase
         df["Sector"] = df["Sector"].replace({
             "Pap": "PAP", "Eeg": "EEG", "Ecg": "ECG", "Rmn": "RMN", "Tac": "TAC"
