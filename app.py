@@ -256,12 +256,39 @@ def parse_guarani_number(series):
 
 
 # ──────────────────────────────────────────────────────────────────────────────
+# SMART CSV READER — auto-detects delimiter (comma, semicolon, tab, etc.)
+# ──────────────────────────────────────────────────────────────────────────────
+import csv
+import io
+
+def smart_read_csv(file, **kwargs):
+    """Read CSV auto-detecting the delimiter. Works with file paths and file-like objects."""
+    try:
+        # Try reading a sample to sniff the delimiter
+        if hasattr(file, 'read'):
+            sample = file.read(8192)
+            if isinstance(sample, bytes):
+                sample = sample.decode('utf-8-sig', errors='replace')
+            file.seek(0)
+        else:
+            with open(file, 'r', encoding='utf-8-sig', errors='replace') as f:
+                sample = f.read(8192)
+        dialect = csv.Sniffer().sniff(sample, delimiters=',;\t|')
+        sep = dialect.delimiter
+    except Exception:
+        sep = ','  # default fallback
+    kwargs.setdefault('encoding', 'utf-8-sig')
+    kwargs.setdefault('sep', sep)
+    return pd.read_csv(file, **kwargs)
+
+
+# ──────────────────────────────────────────────────────────────────────────────
 # DATA LOADING & PREPROCESSING
 # ──────────────────────────────────────────────────────────────────────────────
 @st.cache_data
 def load_data(file):
     """Load CSV adapted to the actual file format from the medical center."""
-    df = pd.read_csv(file, encoding="utf-8-sig")  # handles BOM
+    df = smart_read_csv(file)
     df = df.reset_index(drop=True)  # ensure unique index after concat/dedup
 
     # ── Strip whitespace from column names ───────────────────────────────
@@ -558,8 +585,8 @@ with st.sidebar:
                 with st.spinner("Anexando datos a la base principal y optimizando duplicados..."):
                     base_path = CACHE_FILE_PATH if os.path.exists(CACHE_FILE_PATH) else ("data/dataset_base.zip" if os.path.exists("data/dataset_base.zip") else None)
                     if base_path:
-                        df_base = pd.read_csv(base_path, encoding="utf-8-sig", low_memory=False)
-                        df_new = pd.read_csv(uploaded_file, encoding="utf-8-sig", low_memory=False)
+                        df_base = smart_read_csv(base_path, low_memory=False)
+                        df_new = smart_read_csv(uploaded_file, low_memory=False)
                         df_concat = pd.concat([df_base, df_new], ignore_index=True).drop_duplicates()
                         df_concat.to_csv(CACHE_FILE_PATH, index=False, encoding="utf-8-sig")
                     else:
