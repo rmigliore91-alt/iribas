@@ -281,9 +281,17 @@ def load_data(file):
             new_cols.append(c)
     df.columns = new_cols
 
-    # ── Rename second Hora (now "Hora_2") to "Hora_Num" for compat ───────
+    # ── Rename second Hora to "Hora_Num" (handles both our _2 and pandas .1)
+    rename_map = {}
     if "Hora_2" in df.columns:
-        df = df.rename(columns={"Hora_2": "Hora_Num"})
+        rename_map["Hora_2"] = "Hora_Num"
+    if "Hora.1" in df.columns:
+        rename_map["Hora.1"] = "Hora_Num"
+    # Fix known typo in source data
+    if "Total a PAgar Seguro" in df.columns:
+        rename_map["Total a PAgar Seguro"] = "Total a Pagar Seguro"
+    if rename_map:
+        df = df.rename(columns=rename_map)
 
     # ── Strip whitespace from all string values ─────────────────────────
     for col in df.select_dtypes(include="object").columns:
