@@ -264,6 +264,7 @@ def parse_guarani_number(series):
 def load_data(file):
     """Load CSV adapted to the actual file format from the medical center."""
     df = pd.read_csv(file, encoding="utf-8-sig")  # handles BOM
+    df = df.reset_index(drop=True)  # ensure unique index after concat/dedup
 
     # ── Strip whitespace from column names ───────────────────────────────
     df.columns = df.columns.str.strip()
