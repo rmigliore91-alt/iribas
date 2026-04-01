@@ -587,6 +587,11 @@ with st.sidebar:
                     if base_path:
                         df_base = smart_read_csv(base_path, low_memory=False)
                         df_new = smart_read_csv(uploaded_file, low_memory=False)
+                        # Normalize column names before concat (strip spaces + fix typos)
+                        df_base.columns = df_base.columns.str.strip()
+                        df_new.columns = df_new.columns.str.strip()
+                        if "Total a PAgar Seguro" in df_base.columns:
+                            df_base = df_base.rename(columns={"Total a PAgar Seguro": "Total a Pagar Seguro"})
                         df_concat = pd.concat([df_base, df_new], ignore_index=True).drop_duplicates()
                         df_concat.to_csv(CACHE_FILE_PATH, index=False, encoding="utf-8-sig")
                     else:
