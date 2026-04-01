@@ -443,6 +443,12 @@ def load_data(file):
             lambda x: "Externo" if x != "IRIBAS" else "IRIBAS"
         )
 
+    # ── Agente de Fichaje (from 'Usuario que fichó' column) ──────────────
+    if "Usuario que fichó" in df.columns:
+        df["Agente"] = df["Usuario que fichó"].apply(
+            lambda x: str(x).strip() if pd.notna(x) and str(x).strip() != "" else pd.NA
+        )
+
     # ── Replace bare "-" with NaN in remaining object cols ───────────────
     for col in df.select_dtypes(include="object").columns:
         df[col] = df[col].replace("-", pd.NA)
@@ -550,11 +556,12 @@ _all_pages = [
     "🏢 Rendimiento por Sector",       # 6 → tab4
     "🔎 Análisis de Estudios",         # 7 → tab10
     "🛡️ Ranking de Seguros",           # 8 → tab7
-    "⚖️ Comparativa",                  # 9 → tab8
+    "📝 Agentes de Fichaje",           # 9 → tab12
+    "⚖️ Comparativa",                  # 10 → tab8
 ]
 
 if user_role == "admin":
-    _all_pages.append("⚙️ Panel Admin")  # 10 → tab9
+    _all_pages.append("⚙️ Panel Admin")  # 11 → tab9
 
 with st.sidebar:
     st.markdown("##### 📍 Menú Principal")
@@ -578,10 +585,10 @@ with st.sidebar:
     _nav_group("GENERAL", [0])
     _nav_group("FINANCIERO", [1, 2])
     _nav_group("MÉDICOS", [3, 4])
-    _nav_group("INSTITUCIÓN", [5, 6, 7, 8])
-    _nav_group("ANÁLISIS", [9])
+    _nav_group("INSTITUCIÓN", [5, 6, 7, 8, 9])
+    _nav_group("ANÁLISIS", [10])
     if user_role == "admin":
-        _nav_group("ADMINISTRACIÓN", [10])
+        _nav_group("ADMINISTRACIÓN", [11])
 
     current_tab = st.session_state["_active_page"]
     st.markdown("---")
@@ -596,8 +603,9 @@ tab2  = current_tab == _all_pages[5]   # Mapa de Calor
 tab4  = current_tab == _all_pages[6]   # Rendimiento por Sector
 tab10 = current_tab == _all_pages[7]   # Análisis de Estudios
 tab7  = current_tab == _all_pages[8]   # Ranking de Seguros
-tab8  = current_tab == _all_pages[9]   # Comparativa
-tab9  = current_tab == _all_pages[10] if user_role == "admin" else False
+tab12 = current_tab == _all_pages[9]   # Agentes de Fichaje
+tab8  = current_tab == _all_pages[10]  # Comparativa
+tab9  = current_tab == _all_pages[11] if user_role == "admin" else False
 
 # ──────────────────────────────────────────────────────────────────────────────
 # SIDEBAR – DATA UPLOAD & FILTERS
@@ -1785,6 +1793,172 @@ if tab7:
             )
     else:
         st.info("Columnas 'Seguro' o 'TOTAL' no disponibles.")
+
+# ── TAB 12 — Agentes de Fichaje ────────────────────────────────────────────
+if tab12:
+    st.markdown("### 📝 Agentes de Fichaje")
+    st.markdown("Análisis de productividad de los usuarios que registran estudios en el sistema. Solo incluye registros con agente asignado (datos 2026+).")
+
+    has_agente = "Agente" in df_filtered.columns
+    if has_agente:
+        df_ag = df_filtered[df_filtered["Agente"].notna()].copy()
+    else:
+        df_ag = pd.DataFrame()
+
+    if df_ag.empty:
+        st.warning("No hay datos de agentes de fichaje en el período seleccionado. Esta información está disponible solo para datos de 2026 en adelante.")
+    else:
+        n_agentes = df_ag["Agente"].nunique()
+        n_fichas = len(df_ag)
+        rev_total = df_ag["TOTAL"].sum() if "TOTAL" in df_ag.columns else 0
+
+        k1, k2, k3 = st.columns(3)
+        k1.metric("👥 Agentes Activos", f"{n_agentes}")
+        k2.metric("📋 Estudios Fichados", f"{n_fichas:,}")
+        k3.metric("💰 Facturación Total", f"₲ {rev_total:,.0f}")
+
+        # ── Filter by sector inside this tab ──
+        col_filt1, col_filt2 = st.columns(2)
+        with col_filt1:
+            if "Sector" in df_ag.columns:
+                sectores_ag = ["Todos"] + sorted(df_ag["Sector"].dropna().unique().tolist())
+                sel_sector_ag = st.selectbox("Filtrar por Sector", sectores_ag, key="ag_sector")
+                if sel_sector_ag != "Todos":
+                    df_ag = df_ag[df_ag["Sector"] == sel_sector_ag]
+        with col_filt2:
+            if "Lugar_Estudio" in df_ag.columns:
+                lugares_ag = ["Todos", "IRIBAS", "Externos"]
+                sel_lugar_ag = st.selectbox("Filtrar por Lugar", lugares_ag, key="ag_lugar")
+                if sel_lugar_ag == "IRIBAS":
+                    df_ag = df_ag[df_ag["Lugar_Estudio"] == "IRIBAS"]
+                elif sel_lugar_ag == "Externos":
+                    df_ag = df_ag[df_ag["Lugar_Estudio"] != "IRIBAS"]
+
+        st.markdown("---")
+
+        # ── 1. Volume by Agent ──
+        df_vol_ag = (
+            df_ag.groupby("Agente")
+            .size()
+            .reset_index(name="Estudios")
+            .sort_values("Estudios", ascending=False)
+        )
+
+        fig_vol = px.bar(
+            df_vol_ag, x="Agente", y="Estudios", text="Estudios",
+            color="Estudios", color_continuous_scale="Blues",
+        )
+        fig_vol.update_traces(
+            textposition="outside",
+            hovertemplate="<b>%{x}</b><br>Estudios: %{y:,}<extra></extra>",
+        )
+        fig_vol.update_layout(
+            **PLOTLY_LAYOUT,
+            title="Volumen de Estudios por Agente",
+            height=450,
+            xaxis=dict(title="", tickangle=-35),
+            yaxis=dict(title="Estudios"),
+            coloraxis_showscale=False,
+        )
+        st.plotly_chart(fig_vol, use_container_width=True, key="ag_vol")
+
+        # ── 2. IRIBAS vs Externo by Agent ──
+        if "Es_Externo" in df_ag.columns:
+            col_a, col_b = st.columns(2)
+            with col_a:
+                df_lugar_ag = (
+                    df_ag.groupby(["Agente", "Es_Externo"])
+                    .size()
+                    .reset_index(name="Estudios")
+                )
+                fig_lugar = px.bar(
+                    df_lugar_ag, x="Agente", y="Estudios", color="Es_Externo",
+                    barmode="stack", text="Estudios",
+                    color_discrete_map={"IRIBAS": "#58a6ff", "Externo": "#f78166"},
+                )
+                fig_lugar.update_traces(textposition="inside", textfont_size=10)
+                fig_lugar.update_layout(
+                    **PLOTLY_LAYOUT,
+                    title="IRIBAS vs Externo por Agente",
+                    height=420,
+                    xaxis=dict(title="", tickangle=-35),
+                    yaxis=dict(title="Estudios"),
+                    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5),
+                )
+                st.plotly_chart(fig_lugar, use_container_width=True, key="ag_lugar")
+
+            with col_b:
+                # Revenue by Agent
+                if "TOTAL" in df_ag.columns:
+                    df_rev_ag = (
+                        df_ag.groupby("Agente")["TOTAL"]
+                        .sum()
+                        .sort_values(ascending=True)
+                        .reset_index()
+                    )
+                    fig_rev = px.bar(
+                        df_rev_ag, y="Agente", x="TOTAL", orientation="h",
+                        text=df_rev_ag["TOTAL"].apply(lambda x: f"₲ {x:,.0f}"),
+                        color="TOTAL", color_continuous_scale="Greens",
+                    )
+                    fig_rev.update_traces(textposition="outside", textfont_size=10)
+                    fig_rev.update_layout(
+                        **PLOTLY_LAYOUT,
+                        title="Facturación por Agente",
+                        height=420,
+                        xaxis=dict(title="Facturación (₲)"),
+                        yaxis=dict(title=""),
+                        coloraxis_showscale=False,
+                    )
+                    st.plotly_chart(fig_rev, use_container_width=True, key="ag_rev")
+
+        # ── 3. Treemap: Agente → Sector breakdown ──
+        if "Sector" in df_ag.columns and "TOTAL" in df_ag.columns:
+            st.markdown("---")
+            df_tree = (
+                df_ag.groupby(["Agente", "Sector"])
+                .agg(Estudios=("TOTAL", "count"), Facturación=("TOTAL", "sum"))
+                .reset_index()
+            )
+            fig_tree = px.treemap(
+                df_tree, path=["Agente", "Sector"], values="Estudios",
+                color="Facturación", color_continuous_scale="Blues",
+                hover_data={"Facturación": ":,.0f"},
+            )
+            fig_tree.update_layout(
+                **PLOTLY_LAYOUT,
+                title="Composición: Agente → Sector (tamaño = estudios, color = facturación)",
+                height=550,
+            )
+            st.plotly_chart(fig_tree, use_container_width=True, key="ag_tree")
+
+        # ── 4. Detail table ──
+        st.markdown("---")
+        st.markdown("#### 📊 Tabla Resumen por Agente")
+        if "TOTAL" in df_ag.columns:
+            df_tabla = (
+                df_ag.groupby("Agente")
+                .agg(
+                    Estudios=("TOTAL", "count"),
+                    Facturación=("TOTAL", "sum"),
+                    Promedio_por_Estudio=("TOTAL", "mean"),
+                )
+                .sort_values("Estudios", ascending=False)
+                .reset_index()
+            )
+            if "Es_Externo" in df_ag.columns:
+                df_ext_count = (
+                    df_ag[df_ag["Es_Externo"] == "Externo"]
+                    .groupby("Agente").size()
+                    .reset_index(name="Estudios_Externos")
+                )
+                df_tabla = df_tabla.merge(df_ext_count, on="Agente", how="left")
+                df_tabla["Estudios_Externos"] = df_tabla["Estudios_Externos"].fillna(0).astype(int)
+                df_tabla["% Externo"] = (df_tabla["Estudios_Externos"] / df_tabla["Estudios"] * 100).round(1)
+
+            df_tabla["Facturación"] = df_tabla["Facturación"].apply(lambda x: f"₲ {x:,.0f}")
+            df_tabla["Promedio_por_Estudio"] = df_tabla["Promedio_por_Estudio"].apply(lambda x: f"₲ {x:,.0f}")
+            st.dataframe(df_tabla, use_container_width=True, hide_index=True, height=400)
 
 # ── TAB 8 — Comparativa entre Períodos ─────────────────────────────────────
 if tab8:
