@@ -575,31 +575,39 @@ with st.sidebar:
         )
 
         if uploaded_file is not None:
+            # Track which file has already been processed to avoid re-running on every rerun
+            file_id = f"{uploaded_file.name}_{uploaded_file.size}"
+            already_processed = st.session_state.get("_last_processed_file") == file_id
+
             os.makedirs(os.path.dirname(CACHE_FILE_PATH), exist_ok=True)
             if modo_carga == "Sustituir Base Completa":
-                with open(CACHE_FILE_PATH, "wb") as f:
-                    f.write(uploaded_file.getbuffer())
-                file_to_load = uploaded_file
-                auth.log_action(user_email, "Subió un nuevo archivo CSV sustituto")
-            else:
-                with st.spinner("Anexando datos a la base principal y optimizando duplicados..."):
-                    base_path = CACHE_FILE_PATH if os.path.exists(CACHE_FILE_PATH) else ("data/dataset_base.zip" if os.path.exists("data/dataset_base.zip") else None)
-                    if base_path:
-                        df_base = smart_read_csv(base_path, low_memory=False)
-                        df_new = smart_read_csv(uploaded_file, low_memory=False)
-                        # Normalize column names before concat (strip spaces + fix typos)
-                        df_base.columns = df_base.columns.str.strip()
-                        df_new.columns = df_new.columns.str.strip()
-                        if "Total a PAgar Seguro" in df_base.columns:
-                            df_base = df_base.rename(columns={"Total a PAgar Seguro": "Total a Pagar Seguro"})
-                        df_concat = pd.concat([df_base, df_new], ignore_index=True).drop_duplicates()
-                        df_concat.to_csv(CACHE_FILE_PATH, index=False, encoding="utf-8-sig")
-                    else:
-                        with open(CACHE_FILE_PATH, "wb") as f:
-                            f.write(uploaded_file.getbuffer())
+                if not already_processed:
+                    with open(CACHE_FILE_PATH, "wb") as f:
+                        f.write(uploaded_file.getbuffer())
+                    auth.log_action(user_email, "Subió un nuevo archivo CSV sustituto")
+                    st.session_state["_last_processed_file"] = file_id
                 file_to_load = CACHE_FILE_PATH
-                st.success("¡Datos anexados perfectamente!")
-                auth.log_action(user_email, "Anexó nuevos datos al CSV base")
+            else:
+                if not already_processed:
+                    with st.spinner("Anexando datos a la base principal y optimizando duplicados..."):
+                        base_path = CACHE_FILE_PATH if os.path.exists(CACHE_FILE_PATH) else ("data/dataset_base.zip" if os.path.exists("data/dataset_base.zip") else None)
+                        if base_path:
+                            df_base = smart_read_csv(base_path, low_memory=False)
+                            df_new = smart_read_csv(uploaded_file, low_memory=False)
+                            # Normalize column names before concat (strip spaces + fix typos)
+                            df_base.columns = df_base.columns.str.strip()
+                            df_new.columns = df_new.columns.str.strip()
+                            if "Total a PAgar Seguro" in df_base.columns:
+                                df_base = df_base.rename(columns={"Total a PAgar Seguro": "Total a Pagar Seguro"})
+                            df_concat = pd.concat([df_base, df_new], ignore_index=True).drop_duplicates()
+                            df_concat.to_csv(CACHE_FILE_PATH, index=False, encoding="utf-8-sig")
+                        else:
+                            with open(CACHE_FILE_PATH, "wb") as f:
+                                f.write(uploaded_file.getbuffer())
+                    st.session_state["_last_processed_file"] = file_id
+                    auth.log_action(user_email, "Anexó nuevos datos al CSV base")
+                file_to_load = CACHE_FILE_PATH
+                st.success("✅ Datos anexados. Base actualizada.")
         elif os.path.exists(CACHE_FILE_PATH):
             file_to_load = CACHE_FILE_PATH
             st.success("✅ Base de datos unificada en memoria temporal.")
