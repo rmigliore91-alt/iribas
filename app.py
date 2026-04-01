@@ -523,40 +523,67 @@ user_role = st.session_state["user"]["role"]
 user_email = st.session_state["user"]["email"]
 
 # ──────────────────────────────────────────────────────────────────────────────
-# MENÚ LOGICO / NAV LATERAL
+# MENÚ LOGICO / NAV LATERAL (grouped by domain)
 # ──────────────────────────────────────────────────────────────────────────────
-# Determine tabs based on role
-tab_titles = [
-    "📈 Evolución Histórica",
-    "🔥 Mapa de Calor",
-    "💰 Financiero",
-    "🏢 Rendimiento Sector",
-    "🩺 Red de Derivación",
-    "🔬 Radiólogos Informantes",
-    "🛡️ Ranking Seguros",
-    "⚖️ Comparativa",
-    "🔎 Análisis de Estudios",
-    "💎 Micro-Rentabilidad y Caja",
+# Flat list used internally — order matches the grouped sidebar below
+_all_pages = [
+    "📊 Dashboard General",            # 0 → tab1 (Evolución)
+    "💰 KPIs Financieros",             # 1 → tab3
+    "💎 Micro-Rentabilidad y Caja",    # 2 → tab11
+    "🩺 Médicos Tratantes",            # 3 → tab5 (Red de Derivación)
+    "🔬 Radiólogos Informantes",       # 4 → tab6
+    "🔥 Mapa de Calor",                # 5 → tab2
+    "🏢 Rendimiento por Sector",       # 6 → tab4
+    "🔎 Análisis de Estudios",         # 7 → tab10
+    "🛡️ Ranking de Seguros",           # 8 → tab7
+    "⚖️ Comparativa",                  # 9 → tab8
 ]
 
 if user_role == "admin":
-    tab_titles.append("⚙️ Panel Admin")
+    _all_pages.append("⚙️ Panel Admin")  # 10 → tab9
 
 with st.sidebar:
-    current_tab = st.radio("📍 Menú Principal", tab_titles)
+    st.markdown("##### 📍 Menú Principal")
+
+    # ── Initialize active page in session state ──
+    if "_active_page" not in st.session_state:
+        st.session_state["_active_page"] = _all_pages[0]
+
+    def _set_page(page):
+        st.session_state["_active_page"] = page
+
+    # Helper: render a group of pages as buttons
+    def _nav_group(label, page_indices):
+        st.markdown(f"<p style='color:#aaa;font-size:0.72rem;margin:12px 0 2px 4px;letter-spacing:0.05em;text-transform:uppercase;'>{label}</p>", unsafe_allow_html=True)
+        for idx in page_indices:
+            page = _all_pages[idx]
+            is_active = st.session_state["_active_page"] == page
+            btn_type = "primary" if is_active else "secondary"
+            st.button(page, key=f"nav_{idx}", on_click=_set_page, args=(page,), use_container_width=True, type=btn_type)
+
+    _nav_group("GENERAL", [0])
+    _nav_group("FINANCIERO", [1, 2])
+    _nav_group("MÉDICOS", [3, 4])
+    _nav_group("INSTITUCIÓN", [5, 6, 7, 8])
+    _nav_group("ANÁLISIS", [9])
+    if user_role == "admin":
+        _nav_group("ADMINISTRACIÓN", [10])
+
+    current_tab = st.session_state["_active_page"]
     st.markdown("---")
 
-tab1 = current_tab == tab_titles[0]
-tab2 = current_tab == tab_titles[1]
-tab3 = current_tab == tab_titles[2]
-tab4 = current_tab == tab_titles[3]
-tab5 = current_tab == tab_titles[4]
-tab6 = current_tab == tab_titles[5]
-tab7 = current_tab == tab_titles[6]
-tab8 = current_tab == tab_titles[7]
-tab10 = current_tab == tab_titles[8]
-tab11 = current_tab == tab_titles[9]
-tab9 = current_tab == tab_titles[10] if user_role == "admin" else False
+# Map grouped menu → same tab flags used by all content blocks
+tab1  = current_tab == _all_pages[0]   # Dashboard General
+tab3  = current_tab == _all_pages[1]   # KPIs Financieros
+tab11 = current_tab == _all_pages[2]   # Micro-Rentabilidad
+tab5  = current_tab == _all_pages[3]   # Médicos Tratantes
+tab6  = current_tab == _all_pages[4]   # Radiólogos Informantes
+tab2  = current_tab == _all_pages[5]   # Mapa de Calor
+tab4  = current_tab == _all_pages[6]   # Rendimiento por Sector
+tab10 = current_tab == _all_pages[7]   # Análisis de Estudios
+tab7  = current_tab == _all_pages[8]   # Ranking de Seguros
+tab8  = current_tab == _all_pages[9]   # Comparativa
+tab9  = current_tab == _all_pages[10] if user_role == "admin" else False
 
 # ──────────────────────────────────────────────────────────────────────────────
 # SIDEBAR – DATA UPLOAD & FILTERS
@@ -752,7 +779,7 @@ with st.sidebar:
 
 # ── TAB 1 — Evolución Histórica ─────────────────────────────────────────────
 if tab1:
-    st.markdown("### 📈 Evolución Histórica")
+    st.markdown("### 📊 Dashboard General")
     st.markdown("### Volumen de Estudios e Ingresos a lo largo del Tiempo")
     if "Fecha" in df_filtered.columns and "TOTAL" in df_filtered.columns:
         df_t = (
@@ -1057,7 +1084,7 @@ if tab4:
 
 # ── TAB 5 — Red de Derivación ───────────────────────────────────────────────
 if tab5:
-    st.markdown("### Top 15 Doctores Tratantes — Volumen y Facturación")
+    st.markdown("### 🩺 Médicos Tratantes — Top 15 Volumen y Facturación")
     if "Doctor Tratante" in df_filtered.columns and "TOTAL" in df_filtered.columns:
         df_d = (
             df_filtered
