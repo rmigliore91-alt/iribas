@@ -429,6 +429,20 @@ def load_data(file):
     if "Sector" in df.columns:
         df["Puntaje_Dificultad"] = df["Sector"].map(DIFICULTAD_SECTOR).fillna(DIFICULTAD_DEFAULT)
 
+    # ── Lugar de Estudio (from OTRO column) ──────────────────────────────
+    if "OTRO" in df.columns:
+        df["Lugar_Estudio"] = df["OTRO"].apply(
+            lambda x: str(x).strip().upper() if pd.notna(x) else "IRIBAS"
+        )
+        # SI means the study was done at IRIBAS
+        df["Lugar_Estudio"] = df["Lugar_Estudio"].replace({
+            "SI": "IRIBAS", "": "IRIBAS",
+        })
+        # Flag: internal vs external
+        df["Es_Externo"] = df["Lugar_Estudio"].apply(
+            lambda x: "Externo" if x != "IRIBAS" else "IRIBAS"
+        )
+
     # ── Replace bare "-" with NaN in remaining object cols ───────────────
     for col in df.select_dtypes(include="object").columns:
         df[col] = df[col].replace("-", pd.NA)
@@ -746,6 +760,19 @@ with st.sidebar:
         if sel_doc != "Todos":
             mask = mask & (df["Doctor Tratante"] == sel_doc)
 
+    # Lugar de Estudio
+    if "Lugar_Estudio" in df.columns:
+        lugares = ["Todos", "IRIBAS", "Externos"] + sorted(
+            [l for l in df["Lugar_Estudio"].dropna().unique().tolist() if l != "IRIBAS"]
+        )
+        sel_lugar = st.selectbox("🏥 Lugar del Estudio", lugares, index=0)
+        if sel_lugar == "IRIBAS":
+            mask = mask & (df["Lugar_Estudio"] == "IRIBAS")
+        elif sel_lugar == "Externos":
+            mask = mask & (df["Lugar_Estudio"] != "IRIBAS")
+        elif sel_lugar != "Todos":
+            mask = mask & (df["Lugar_Estudio"] == sel_lugar)
+
     st.markdown("---")
     st.caption(f"Registros filtrados: **{mask.sum():,}** / {len(df):,}")
 
@@ -1005,6 +1032,84 @@ if tab3:
             st.plotly_chart(fig_cross_fac, use_container_width=True, key="tab3_cross_fac")
         else:
             st.info("Selecciona al menos un sector para ver el análisis cruzado.")
+
+    # ── Lugar de Estudio — IRIBAS vs Externos ────────────────────────────
+    if "Lugar_Estudio" in df_filtered.columns and "TOTAL" in df_filtered.columns:
+        st.markdown("---")
+        st.markdown("### 🏥 Distribución por Lugar de Estudio")
+
+        # KPIs: IRIBAS vs Externos
+        df_iribas = df_filtered[df_filtered["Lugar_Estudio"] == "IRIBAS"]
+        df_externo = df_filtered[df_filtered["Lugar_Estudio"] != "IRIBAS"]
+
+        n_iribas = len(df_iribas)
+        n_ext = len(df_externo)
+        rev_iribas = df_iribas["TOTAL"].sum()
+        rev_ext = df_externo["TOTAL"].sum()
+        pct_iribas = n_iribas / max(len(df_filtered), 1) * 100
+
+        k1, k2, k3, k4 = st.columns(4)
+        k1.metric("📊 Estudios IRIBAS", f"{n_iribas:,}", f"{pct_iribas:.1f}%")
+        k2.metric("💰 Facturación IRIBAS", f"₲ {rev_iribas:,.0f}")
+        k3.metric("📊 Estudios Externos", f"{n_ext:,}", f"{100 - pct_iribas:.1f}%")
+        k4.metric("💰 Facturación Externos", f"₲ {rev_ext:,.0f}")
+
+        col_lugar1, col_lugar2 = st.columns(2)
+
+        with col_lugar1:
+            # Pie chart: IRIBAS vs Externo
+            df_pie_lugar = pd.DataFrame({
+                "Lugar": ["IRIBAS", "Externos"],
+                "Estudios": [n_iribas, n_ext],
+            })
+            fig_pie = px.pie(
+                df_pie_lugar, values="Estudios", names="Lugar",
+                color="Lugar",
+                color_discrete_map={"IRIBAS": "#58a6ff", "Externos": "#f78166"},
+                hole=0.4,
+            )
+            fig_pie.update_layout(**PLOTLY_LAYOUT, title="Volumen: IRIBAS vs Externos", height=380)
+            st.plotly_chart(fig_pie, use_container_width=True, key="tab3_pie_lugar")
+
+        with col_lugar2:
+            # Pie chart by revenue
+            df_pie_rev = pd.DataFrame({
+                "Lugar": ["IRIBAS", "Externos"],
+                "Facturación": [rev_iribas, rev_ext],
+            })
+            fig_pie_rev = px.pie(
+                df_pie_rev, values="Facturación", names="Lugar",
+                color="Lugar",
+                color_discrete_map={"IRIBAS": "#58a6ff", "Externos": "#f78166"},
+                hole=0.4,
+            )
+            fig_pie_rev.update_layout(**PLOTLY_LAYOUT, title="Facturación: IRIBAS vs Externos", height=380)
+            st.plotly_chart(fig_pie_rev, use_container_width=True, key="tab3_pie_rev_lugar")
+
+        # Bar chart: detail by external facility
+        if n_ext > 0:
+            df_ext_detail = (
+                df_externo.groupby("Lugar_Estudio")
+                .agg(Estudios=("TOTAL", "count"), Facturación=("TOTAL", "sum"))
+                .sort_values("Estudios", ascending=False)
+                .reset_index()
+            )
+            fig_ext = px.bar(
+                df_ext_detail, x="Lugar_Estudio", y="Estudios",
+                text="Estudios", color="Facturación",
+                color_continuous_scale="Blues",
+            )
+            fig_ext.update_traces(
+                textposition="outside",
+                hovertemplate="<b>%{x}</b><br>Estudios: %{y:,}<br>Facturación: ₲ %{marker.color:,.0f}<extra></extra>",
+            )
+            fig_ext.update_layout(
+                **PLOTLY_LAYOUT, title="Detalle por Centro Externo",
+                height=420,
+                xaxis=dict(title="Centro"),
+                yaxis=dict(title="Estudios"),
+            )
+            st.plotly_chart(fig_ext, use_container_width=True, key="tab3_ext_detail")
 
 # ── TAB 4 — Rendimiento por Sector ──────────────────────────────────────────
 if tab4:
