@@ -1885,7 +1885,7 @@ if tab12:
                     yaxis=dict(title="Estudios"),
                     legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5),
                 )
-                st.plotly_chart(fig_lugar, use_container_width=True, key="ag_lugar")
+                st.plotly_chart(fig_lugar, use_container_width=True, key="ag_lugar_chart")
 
             with col_b:
                 # Revenue by Agent
