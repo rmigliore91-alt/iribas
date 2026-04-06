@@ -2185,42 +2185,173 @@ if tab_cc:
         except Exception:
             return 0.0
 
+    # ── Helper: parse Turnos Agendados PDF ────────────────────────────────
+    def _parse_turnos_pdf(pdf_bytes: bytes) -> pd.DataFrame:
+        """
+        Parse a pivot-table PDF of scheduled appointments.
+        Expects: Etiquetas de fila | Audio | Cardiología | ... | Total general
+        Returns a DataFrame with Agente + study-type columns + Total.
+        """
+        all_rows = []
+        header = None
+        with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
+            for page in pdf.pages:
+                text = page.extract_text() or ""
+                lines = [l.strip() for l in text.split("\n") if l.strip()]
+                for ln in lines:
+                    tokens = ln.split()
+                    if not tokens:
+                        continue
+                    # Detect header row: contains "Etiquetas" or multiple
+                    # study-type words
+                    if any("etiqueta" in t.lower() for t in tokens[:3]):
+                        # Rebuild header — first field is the label col name
+                        # Find where the real column names start
+                        idx = 0
+                        for i, t in enumerate(tokens):
+                            if t.lower().startswith("etiqueta"):
+                                # "Etiquetas de fila" = 3 tokens
+                                idx = i
+                                break
+                        # Combine "Etiquetas de fila" into one label
+                        rest_start = idx
+                        if idx + 2 < len(tokens) and tokens[idx+1].lower() == "de" and tokens[idx+2].lower() == "fila":
+                            rest_start = idx + 3
+                        elif idx + 1 < len(tokens) and tokens[idx+1].lower() in ("de", "fila"):
+                            rest_start = idx + 2
+                        else:
+                            rest_start = idx + 1
+                        # Handle multi-word column names: "Densitometría Osea",
+                        # "Total general", etc.
+                        raw_cols = tokens[rest_start:]
+                        merged_cols = []
+                        skip = False
+                        for j, c in enumerate(raw_cols):
+                            if skip:
+                                skip = False
+                                continue
+                            # Check if next token is a qualifying word
+                            if j + 1 < len(raw_cols) and raw_cols[j+1].lower() in (
+                                "osea", "ósea", "general"
+                            ):
+                                merged_cols.append(f"{c} {raw_cols[j+1]}")
+                                skip = True
+                            else:
+                                merged_cols.append(c)
+                        header = ["Agente"] + merged_cols
+                        continue
+                    # Data rows: agent name followed by numbers
+                    # Agent name could be one word (LilianDiaz) or multiple
+                    # Identify where the numbers start
+                    num_start = -1
+                    for i, t in enumerate(tokens):
+                        try:
+                            int(t)
+                            num_start = i
+                            break
+                        except ValueError:
+                            continue
+                    if num_start > 0:
+                        agent_name = " ".join(tokens[:num_start])
+                        values = []
+                        for t in tokens[num_start:]:
+                            try:
+                                values.append(int(t))
+                            except ValueError:
+                                try:
+                                    values.append(int(t.replace(",", "").replace(".", "")))
+                                except ValueError:
+                                    pass
+                        if values:
+                            all_rows.append([agent_name] + values)
+
+        if all_rows and header:
+            # Normalize row lengths to match header
+            n_cols = len(header)
+            normed = []
+            for r in all_rows:
+                r_padded = (r + [0] * n_cols)[:n_cols]
+                normed.append(r_padded)
+            df = pd.DataFrame(normed, columns=header)
+            return df
+        elif all_rows:
+            # No explicit header found — generate generic ones
+            max_len = max(len(r) for r in all_rows)
+            header = ["Agente"] + [f"Tipo_{i}" for i in range(1, max_len)]
+            normed = [(r + [0] * max_len)[:max_len] for r in all_rows]
+            return pd.DataFrame(normed, columns=header)
+        return pd.DataFrame()
+
     # ── Session-state store for multi-month data ─────────────────────────
     if "_cc_data" not in st.session_state:
         st.session_state["_cc_data"] = {}  # {month_label: [agent_dicts]}
+    if "_cc_turnos" not in st.session_state:
+        st.session_state["_cc_turnos"] = {}  # {month_label: DataFrame}
 
     # ── Upload UI ────────────────────────────────────────────────────────
     st.markdown("---")
-    col_up1, col_up2 = st.columns([1, 2])
-    with col_up1:
-        month_label = st.text_input(
-            "📅 Etiqueta del Mes",
-            placeholder="Ej: Marzo 2026",
-            help="Nombre descriptivo para identificar este reporte.",
-        )
-    with col_up2:
+    st.markdown("##### 📅 Paso 1: Indicar el Mes")
+    month_label = st.text_input(
+        "Etiqueta del Mes",
+        placeholder="Ej: Marzo 2026",
+        help="Nombre descriptivo para identificar este reporte.",
+        key="cc_month_label",
+    )
+
+    st.markdown("##### 📂 Paso 2: Subir PDFs")
+    col_up_cc, col_up_turnos = st.columns(2)
+    with col_up_cc:
         cc_pdf = st.file_uploader(
-            "📂 Subir PDF de Call Center",
+            "📊 PDF de Call Center (actividad)",
             type=["pdf"],
             key="cc_pdf_upload",
-            help="PDF con una página por agente."
+            help="PDF con una página por agente — contiene KPIs y grilla horaria."
+        )
+    with col_up_turnos:
+        turnos_pdf = st.file_uploader(
+            "📅 PDF de Turnos Agendados",
+            type=["pdf"],
+            key="cc_turnos_upload",
+            help="PDF con tabla pivote de turnos agendados por agente y tipo de estudio."
         )
 
+    # Process Call Center PDF
     if cc_pdf and month_label:
         file_id = f"{cc_pdf.name}_{cc_pdf.size}_{month_label}"
         if st.session_state.get("_cc_last_file") != file_id:
-            with st.spinner("Extrayendo datos del PDF…"):
+            with st.spinner("Extrayendo datos de Call Center…"):
                 raw = cc_pdf.read()
                 agents = _parse_callcenter_pdf(raw)
             if agents:
                 st.session_state["_cc_data"][month_label] = agents
                 st.session_state["_cc_last_file"] = file_id
-                st.success(f"✅ Se extrajeron **{len(agents)} agentes** para **{month_label}**.")
+                st.success(f"✅ PDF Call Center: **{len(agents)} agentes** extraídos para **{month_label}**.")
                 st.rerun()
             else:
-                st.error("No se pudieron extraer datos del PDF. Verifica el formato.")
+                st.error("No se pudieron extraer datos del PDF de Call Center. Verifica el formato.")
     elif cc_pdf and not month_label:
         st.warning("⚠️ Escribe una etiqueta de mes antes de procesar el PDF.")
+
+    # Process Turnos PDF
+    if turnos_pdf and month_label:
+        file_id_t = f"{turnos_pdf.name}_{turnos_pdf.size}_{month_label}"
+        if st.session_state.get("_cc_last_turnos") != file_id_t:
+            with st.spinner("Extrayendo datos de Turnos Agendados…"):
+                raw_t = turnos_pdf.read()
+                df_turnos = _parse_turnos_pdf(raw_t)
+            if not df_turnos.empty:
+                st.session_state["_cc_turnos"][month_label] = df_turnos
+                st.session_state["_cc_last_turnos"] = file_id_t
+                st.success(f"✅ PDF Turnos: **{len(df_turnos)} agentes** extraídos para **{month_label}**.")
+                st.rerun()
+            else:
+                st.error("No se pudieron extraer datos del PDF de Turnos. Verifica el formato.")
+                with st.expander("🛠️ Debug: texto extraído del PDF de Turnos"):
+                    with pdfplumber.open(io.BytesIO(turnos_pdf.read() if hasattr(turnos_pdf, 'read') else raw_t)) as _dbg:
+                        for _p in _dbg.pages:
+                            st.code((_p.extract_text() or "")[:2000], language="text")
+    elif turnos_pdf and not month_label:
+        st.warning("⚠️ Escribe una etiqueta de mes antes de procesar el PDF de Turnos.")
 
     # ── Show loaded months ───────────────────────────────────────────────
     cc_data = st.session_state.get("_cc_data", {})
@@ -2238,10 +2369,28 @@ if tab_cc:
                     <span style="color:#8b949e;font-size:0.85rem;">{len(agents)} agentes</span></div>""",
                     unsafe_allow_html=True,
                 )
+        # Show turnos loaded status
+        turnos_data = st.session_state.get("_cc_turnos", {})
+        if turnos_data:
+            st.markdown("#### 📅 Turnos Agendados cargados")
+            turnos_months = st.columns(min(len(turnos_data), 5))
+            for i, (ml, df_t) in enumerate(turnos_data.items()):
+                with turnos_months[i % len(turnos_months)]:
+                    st.markdown(
+                        f"""<div style="background:#161b22;border:1px solid #30363d;border-radius:10px;
+                        padding:14px;text-align:center;">
+                        <span style="font-size:1.4rem;">📅</span><br>
+                        <b style="color:#e6edf3;">{ml}</b><br>
+                        <span style="color:#8b949e;font-size:0.85rem;">{len(df_t)} agentes · {df_t.iloc[:, -1].sum() if not df_t.empty else 0:,} turnos</span></div>""",
+                        unsafe_allow_html=True,
+                    )
+
         # Option to clear data
         if st.button("🗑️ Limpiar todos los datos cargados", key="cc_clear"):
             st.session_state["_cc_data"] = {}
+            st.session_state["_cc_turnos"] = {}
             st.session_state.pop("_cc_last_file", None)
+            st.session_state.pop("_cc_last_turnos", None)
             st.rerun()
 
         # ── Month selector ────────────────────────────────────────────────
@@ -2267,15 +2416,158 @@ if tab_cc:
         avg_cierre = df_kpi["Tasa de Cierre (%)"].mean()
         total_pendientes = df_kpi["Pendientes"].sum()
 
-        k1, k2, k3, k4 = st.columns(4)
+        # Check if turnos exist for this month
+        turnos_data = st.session_state.get("_cc_turnos", {})
+        df_turnos_month = turnos_data.get(sel_month, pd.DataFrame())
+        has_turnos = not df_turnos_month.empty
+        total_turnos = int(df_turnos_month.iloc[:, -1].sum()) if has_turnos else 0
+        tasa_conversion = (total_turnos / total_oportunidades * 100) if total_oportunidades > 0 and has_turnos else None
+
+        if has_turnos:
+            k1, k2, k3, k4, k5, k6 = st.columns(6)
+        else:
+            k1, k2, k3, k4 = st.columns(4)
         k1.metric("🎯 Oportunidades Nuevas", f"{total_oportunidades:,}")
         k2.metric("📈 Tasa Gestión Promedio", f"{avg_gestion:.1f}%")
         k3.metric("🏆 Tasa Cierre Promedio", f"{avg_cierre:.1f}%")
         k4.metric("⏳ Pendientes Totales", f"{total_pendientes:,}")
+        if has_turnos:
+            k5.metric("📅 Turnos Agendados", f"{total_turnos:,}")
+            k6.metric("🔄 Conversión Opp→Turno", f"{tasa_conversion:.1f}%" if tasa_conversion else "N/D")
+
+        # ── Turnos Analysis Section ───────────────────────────────────────
+        if has_turnos:
+            st.markdown("---")
+            st.markdown("#### 📅 Análisis de Turnos Agendados")
+
+            # Normalize agent names for matching (strip spaces & lowercase for lookup)
+            def _norm_name(n):
+                return re.sub(r"\s+", "", str(n).strip().lower())
+
+            # Merge turnos with oportunidades
+            df_t_merged = df_turnos_month.copy()
+            total_col = df_t_merged.columns[-1]  # "Total general" or last col
+            study_cols = [c for c in df_t_merged.columns if c not in ("Agente", total_col)]
+
+            # Build mapping of normed names → oportunidades
+            opp_map = {_norm_name(r["Agente"]): r["Oportunidades Nuevas"] for _, r in df_kpi.iterrows()}
+            df_t_merged["Oportunidades"] = df_t_merged["Agente"].apply(
+                lambda a: opp_map.get(_norm_name(a), 0)
+            )
+            df_t_merged["Conversión (%)"] = (
+                df_t_merged[total_col] / df_t_merged["Oportunidades"].replace(0, float("nan")) * 100
+            ).round(1)
+
+            # KPI table with turnos + conversion
+            st.markdown("##### Turnos y Conversión por Agente")
+            df_t_show = df_t_merged[["Agente", total_col, "Oportunidades", "Conversión (%)"]].copy()
+            df_t_show.columns = ["Agente", "Turnos Agendados", "Oportunidades", "Conversión (%)"]
+            df_t_show["Conversión (%)"] = df_t_show["Conversión (%)"].apply(
+                lambda x: f"{x:.1f}%" if pd.notna(x) else "N/D"
+            )
+            st.dataframe(df_t_show, use_container_width=True, hide_index=True)
+
+            # Bar chart: Turnos vs Oportunidades
+            col_t1, col_t2 = st.columns(2)
+            with col_t1:
+                df_t_bar = df_t_merged[["Agente", total_col]].sort_values(total_col, ascending=True)
+                fig_t_bar = px.bar(
+                    df_t_bar, y="Agente", x=total_col, orientation="h",
+                    text=total_col, color=total_col,
+                    color_continuous_scale=["#1a1e2e", "#3fb950"],
+                )
+                fig_t_bar.update_traces(
+                    texttemplate="%{text:,}", textposition="outside", textfont_size=12,
+                    hovertemplate="<b>%{y}</b><br>Turnos: %{x:,}<extra></extra>",
+                )
+                fig_t_bar.update_layout(
+                    **PLOTLY_LAYOUT, title="Turnos Agendados por Agente",
+                    height=max(380, len(df_t_bar) * 48),
+                    yaxis=dict(title=""),
+                    xaxis=dict(title="Turnos", gridcolor="rgba(48,54,61,0.4)"),
+                    coloraxis_showscale=False,
+                )
+                st.plotly_chart(fig_t_bar, use_container_width=True, key="cc_turnos_bar")
+
+            with col_t2:
+                df_conv = df_t_merged[["Agente", "Conversión (%)"]].dropna().sort_values("Conversión (%)", ascending=True)
+                fig_conv = px.bar(
+                    df_conv, y="Agente", x="Conversión (%)", orientation="h",
+                    text="Conversión (%)", color="Conversión (%)",
+                    color_continuous_scale=["#f78166", "#3fb950"],
+                )
+                fig_conv.update_traces(
+                    texttemplate="%{text:.1f}%", textposition="outside", textfont_size=12,
+                    hovertemplate="<b>%{y}</b><br>Conversión: %{x:.1f}%<extra></extra>",
+                )
+                fig_conv.update_layout(
+                    **PLOTLY_LAYOUT, title="Tasa de Conversión (Opp → Turno)",
+                    height=max(380, len(df_conv) * 48),
+                    yaxis=dict(title=""),
+                    xaxis=dict(title="Conversión (%)", gridcolor="rgba(48,54,61,0.4)"),
+                    coloraxis_showscale=False,
+                )
+                st.plotly_chart(fig_conv, use_container_width=True, key="cc_conv_bar")
+
+            # Stacked bar: Turnos by study type per agent
+            if study_cols:
+                st.markdown("---")
+                st.markdown("##### 🔬 Distribución de Turnos por Tipo de Estudio")
+                df_melt = df_turnos_month.melt(
+                    id_vars="Agente", value_vars=study_cols,
+                    var_name="Tipo de Estudio", value_name="Turnos"
+                )
+                df_melt = df_melt[df_melt["Turnos"] > 0]
+                fig_study = px.bar(
+                    df_melt, x="Agente", y="Turnos", color="Tipo de Estudio",
+                    text="Turnos",
+                )
+                fig_study.update_traces(
+                    textposition="inside", textfont_size=9,
+                    hovertemplate="<b>%{x}</b><br>%{data.name}: %{y:,}<extra></extra>",
+                )
+                fig_study.update_layout(
+                    **PLOTLY_LAYOUT, title=None, height=500,
+                    xaxis=dict(title="", tickangle=-35),
+                    yaxis=dict(title="Turnos", gridcolor="rgba(48,54,61,0.4)"),
+                    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5),
+                    barmode="stack",
+                )
+                st.plotly_chart(fig_study, use_container_width=True, key="cc_study_stack")
+
+                # Donut: overall study type distribution
+                col_d1, col_d2 = st.columns(2)
+                with col_d1:
+                    df_tipo_total = df_melt.groupby("Tipo de Estudio")["Turnos"].sum().reset_index()
+                    df_tipo_total = df_tipo_total.sort_values("Turnos", ascending=False)
+                    fig_tipo_donut = px.pie(
+                        df_tipo_total, names="Tipo de Estudio", values="Turnos",
+                        hole=0.45,
+                    )
+                    fig_tipo_donut.update_traces(
+                        textinfo="percent+value", textfont_size=11,
+                        hovertemplate="<b>%{label}</b><br>Turnos: %{value:,}<br>%{percent}<extra></extra>",
+                    )
+                    fig_tipo_donut.update_layout(
+                        **PLOTLY_LAYOUT, title="Mix de Estudios Agendados",
+                        height=420, showlegend=True,
+                        legend=dict(orientation="v", font=dict(size=10)),
+                    )
+                    st.plotly_chart(fig_tipo_donut, use_container_width=True, key="cc_tipo_donut")
+
+                with col_d2:
+                    # Top study types
+                    st.markdown("##### 🏆 Top Tipos de Estudio")
+                    df_tipo_display = df_tipo_total.copy()
+                    df_tipo_display["% del Total"] = (
+                        df_tipo_display["Turnos"] / df_tipo_display["Turnos"].sum() * 100
+                    ).round(1).apply(lambda x: f"{x:.1f}%")
+                    df_tipo_display["Turnos"] = df_tipo_display["Turnos"].apply(lambda x: f"{x:,}")
+                    st.dataframe(df_tipo_display, use_container_width=True, hide_index=True)
 
         # ── Table: KPIs per Agent ─────────────────────────────────────────
         st.markdown("---")
-        st.markdown("#### 📋 Detalle por Agente")
+        st.markdown("#### 📋 Detalle KPI por Agente")
         df_show = df_kpi.copy()
         df_show["Tasa de Gestión (%)"] = df_show["Tasa de Gestión (%)"].apply(lambda x: f"{x:.1f}%")
         df_show["Tasa de Cierre (%)"] = df_show["Tasa de Cierre (%)"].apply(lambda x: f"{x:.1f}%")
