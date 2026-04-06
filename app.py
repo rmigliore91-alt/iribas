@@ -2384,11 +2384,53 @@ if tab_cc:
 
 
 
+    # ── Persistence helpers ────────────────────────────────────────────────
+    _CC_DATA_PATH = os.path.join("data", "cc_data.json")
+    _CC_TURNOS_PATH = os.path.join("data", "cc_turnos.json")
+
+    def _save_cc_data():
+        """Save CC data and turnos to JSON files for persistence."""
+        import json
+        # Save CC data (list of agent dicts per month)
+        try:
+            with open(_CC_DATA_PATH, "w", encoding="utf-8") as f:
+                json.dump(st.session_state.get("_cc_data", {}), f, ensure_ascii=False)
+        except Exception:
+            pass
+        # Save turnos data (DataFrames → dict per month)
+        try:
+            turnos = st.session_state.get("_cc_turnos", {})
+            turnos_serial = {k: v.to_dict(orient="records") for k, v in turnos.items()}
+            with open(_CC_TURNOS_PATH, "w", encoding="utf-8") as f:
+                json.dump(turnos_serial, f, ensure_ascii=False)
+        except Exception:
+            pass
+
+    def _load_cc_data():
+        """Load CC data and turnos from JSON files."""
+        import json
+        cc_data = {}
+        cc_turnos = {}
+        if os.path.exists(_CC_DATA_PATH):
+            try:
+                with open(_CC_DATA_PATH, "r", encoding="utf-8") as f:
+                    cc_data = json.load(f)
+            except Exception:
+                pass
+        if os.path.exists(_CC_TURNOS_PATH):
+            try:
+                with open(_CC_TURNOS_PATH, "r", encoding="utf-8") as f:
+                    raw = json.load(f)
+                cc_turnos = {k: pd.DataFrame(v) for k, v in raw.items()}
+            except Exception:
+                pass
+        return cc_data, cc_turnos
+
     # ── Session-state store for multi-month data ─────────────────────────
     if "_cc_data" not in st.session_state:
-        st.session_state["_cc_data"] = {}  # {month_label: [agent_dicts]}
-    if "_cc_turnos" not in st.session_state:
-        st.session_state["_cc_turnos"] = {}  # {month_label: DataFrame}
+        loaded_cc, loaded_turnos = _load_cc_data()
+        st.session_state["_cc_data"] = loaded_cc
+        st.session_state["_cc_turnos"] = loaded_turnos
 
     # ── Upload UI ────────────────────────────────────────────────────────
     st.markdown("---")
@@ -2431,6 +2473,7 @@ if tab_cc:
             if agents:
                 st.session_state["_cc_data"][month_label] = agents
                 st.session_state["_cc_last_file"] = file_id
+                _save_cc_data()
                 st.success(f"✅ PDF Call Center: **{len(agents)} agentes** extraídos para **{month_label}**.")
                 st.rerun()
             else:
@@ -2452,6 +2495,7 @@ if tab_cc:
             if not df_turnos.empty:
                 st.session_state["_cc_turnos"][month_label] = df_turnos
                 st.session_state["_cc_last_turnos"] = file_id_t
+                _save_cc_data()
                 st.success(f"✅ PDF Turnos: **{len(df_turnos)} agentes** extraídos para **{month_label}**.")
                 st.rerun()
             else:
@@ -2506,12 +2550,14 @@ if tab_cc:
                     if st.button("🗑️ Call Center", key=f"del_cc_{ml}", use_container_width=True):
                         del st.session_state["_cc_data"][ml]
                         st.session_state.pop("_cc_last_file", None)
+                        _save_cc_data()
                         st.rerun()
             with col_del_t:
                 if has_t:
                     if st.button("🗑️ Turnos", key=f"del_t_{ml}", use_container_width=True):
                         del st.session_state["_cc_turnos"][ml]
                         st.session_state.pop("_cc_last_turnos", None)
+                        _save_cc_data()
                         st.rerun()
             with col_del_all:
                 if has_cc or has_t:
@@ -2522,6 +2568,7 @@ if tab_cc:
                             del st.session_state["_cc_turnos"][ml]
                         st.session_state.pop("_cc_last_file", None)
                         st.session_state.pop("_cc_last_turnos", None)
+                        _save_cc_data()
                         st.rerun()
 
         # Global clear (only if 2+ months)
@@ -2531,6 +2578,7 @@ if tab_cc:
                 st.session_state["_cc_turnos"] = {}
                 st.session_state.pop("_cc_last_file", None)
                 st.session_state.pop("_cc_last_turnos", None)
+                _save_cc_data()
                 st.rerun()
 
         # ── Month selector (only if CC data exists) ───────────────────────
