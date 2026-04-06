@@ -1973,13 +1973,15 @@ if tab_cc:
     )
 
     # ── Helper: parse one PDF into a list of agent dicts ──────────────────
+    _DIAS = {"lunes", "martes", "miércoles", "miercoles", "jueves", "viernes", "sábado", "sabado", "domingo"}
+    _DIAS_TITLE = {d.capitalize() for d in _DIAS} | {d.title() for d in _DIAS}
+    _TIME_RE = re.compile(r"^\d{1,2}:\d{2}$")  # matches 0:54, 13:00, etc.
+    _HOUR_RE = re.compile(r"^\d{1,2}:00$")      # matches 8:00, 15:00, etc.
+
     def _parse_callcenter_pdf(pdf_bytes: bytes) -> list[dict]:
         """
         Extract data from each page of the call-center PDF.
-        Returns a list where each element is a dict with:
-          - agente: str
-          - grid: pd.DataFrame (rows=days, cols=hours, values=call counts / durations)
-          - kpis: dict with parsed KPI values
+        Handles spreadsheet-exported PDFs (no table gridlines).
         """
         results = []
         with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
@@ -1989,23 +1991,161 @@ if tab_cc:
                 if not lines:
                     continue
 
-                # ── Agent name: first line that is NOT a table header ─────
-                agente = lines[0] if lines else "Desconocido"
+                # ── Agent name ────────────────────────────────────────────
+                # Find the first non-trivial line that is NOT a column letter
+                # row, day name, or header row.
+                agente = "Desconocido"
+                for ln in lines:
+                    tokens = ln.split()
+                    # Skip single-letter lines (A B C D...), pure numbers, or
+                    # lines starting with "Día"
+                    if all(len(t) <= 2 for t in tokens):
+                        continue
+                    if ln.lower().startswith("día") or ln.lower().startswith("dia"):
+                        continue
+                    first_word = tokens[0].lower().rstrip(",.:;")
+                    if first_word in _DIAS or _TIME_RE.match(tokens[0]):
+                        continue
+                    # This looks like the agent name
+                    agente = ln.strip()
+                    break
 
-                # ── Extract the table ─────────────────────────────────────
-                tables = page.extract_tables()
+                # ── Extract grid via TEXT parsing (primary strategy) ───────
+                # Look for lines that start with a day name followed by time
+                # values like "Lunes 0:54 0:39 1:00 ..."
+                grid_rows = []
+                hour_headers = []
+
+                for ln in lines:
+                    tokens = ln.split()
+                    if not tokens:
+                        continue
+
+                    # Detect the header row: "Día 8:00 9:00 10:00 ..."
+                    # or: "1 Día 8:00 9:00 ..." (with row number)
+                    if any(t.lower() in ("día", "dia") for t in tokens[:3]):
+                        hours = [t for t in tokens if _HOUR_RE.match(t)]
+                        if hours:
+                            hour_headers = hours
+                        continue
+
+                    # Detect data rows: start with day name (possibly preceded
+                    # by a row number like "2 Lunes 0:54 ...")
+                    first = tokens[0].lower().rstrip(",.:;")
+                    day_idx = -1
+                    if first in _DIAS:
+                        day_idx = 0
+                    elif len(tokens) > 1 and tokens[1].lower().rstrip(",.:;") in _DIAS:
+                        day_idx = 1  # row number prefix
+
+                    if day_idx >= 0:
+                        day_name = tokens[day_idx].capitalize()
+                        # Collect all time values after the day name
+                        time_vals = []
+                        for t in tokens[day_idx + 1:]:
+                            if _TIME_RE.match(t):
+                                time_vals.append(t)
+                            elif t.replace(".", "").replace(",", "").isdigit():
+                                # Could be a standalone number like "7:00"
+                                # or just noise — skip
+                                continue
+                        grid_rows.append([day_name] + time_vals)
+
+                # Build the grid DataFrame
                 grid_df = pd.DataFrame()
-                if tables:
-                    tbl = tables[0]  # main grid is the first table
-                    # First row = header: Día, 8:00, 9:00, ... 19:00
-                    header = [str(c).strip() if c else "" for c in tbl[0]]
-                    rows_data = []
-                    for row in tbl[1:]:
-                        cleaned = [str(c).strip() if c else "" for c in row]
-                        if cleaned and cleaned[0]:  # has a day name
-                            rows_data.append(cleaned)
-                    if header and rows_data:
-                        grid_df = pd.DataFrame(rows_data, columns=header[:len(rows_data[0])])
+                if grid_rows:
+                    if not hour_headers:
+                        # Infer hour headers from the longest row
+                        max_cols = max(len(r) for r in grid_rows)
+                        hour_headers = [f"{h}:00" for h in range(8, 8 + max_cols - 1)]
+
+                    # Normalize row lengths
+                    n_cols = len(hour_headers)
+                    normed = []
+                    for r in grid_rows:
+                        vals = r[1:]  # skip day name
+                        # Pad or truncate to match header count
+                        vals = (vals + ["0:00"] * n_cols)[:n_cols]
+                        normed.append([r[0]] + vals)
+
+                    grid_df = pd.DataFrame(normed, columns=["Día"] + hour_headers)
+
+                # ── FALLBACK: pdfplumber table extraction ─────────────────
+                if grid_df.empty:
+                    try:
+                        tables = page.extract_tables(
+                            table_settings={
+                                "vertical_strategy": "text",
+                                "horizontal_strategy": "text",
+                                "snap_y_tolerance": 5,
+                                "snap_x_tolerance": 5,
+                            }
+                        )
+                        if tables:
+                            for tbl in tables:
+                                if len(tbl) < 2:
+                                    continue
+                                header = [str(c).strip() if c else "" for c in tbl[0]]
+                                # Check if this looks like the main grid
+                                if any(_HOUR_RE.match(h) for h in header):
+                                    rows_data = []
+                                    for row in tbl[1:]:
+                                        cleaned = [str(c).strip() if c else "" for c in row]
+                                        if cleaned and cleaned[0] and cleaned[0].lower().rstrip(",.:;") in _DIAS:
+                                            rows_data.append(cleaned)
+                                    if rows_data:
+                                        grid_df = pd.DataFrame(
+                                            rows_data,
+                                            columns=header[:len(rows_data[0])]
+                                        )
+                                        # Rename first column
+                                        grid_df.columns = ["Día"] + list(grid_df.columns[1:])
+                                        break
+                    except Exception:
+                        pass
+
+                # ── FALLBACK 2: word-based positional extraction ──────────
+                if grid_df.empty:
+                    try:
+                        words = page.extract_words(keep_blank_chars=True,
+                                                    x_tolerance=3, y_tolerance=3)
+                        if words:
+                            # Group words by vertical position (y-coordinate)
+                            from collections import defaultdict
+                            y_groups = defaultdict(list)
+                            for w in words:
+                                y_key = round(w["top"] / 8) * 8  # snap to 8px grid
+                                y_groups[y_key].append(w)
+
+                            # Sort each group by x position
+                            sorted_rows = []
+                            for y_key in sorted(y_groups.keys()):
+                                row_words = sorted(y_groups[y_key], key=lambda w: w["x0"])
+                                row_texts = [w["text"].strip() for w in row_words if w["text"].strip()]
+                                sorted_rows.append(row_texts)
+
+                            # Find header and data rows like in the text approach
+                            hr = []
+                            gr = []
+                            for row_texts in sorted_rows:
+                                if any(t.lower() in ("día", "dia") for t in row_texts[:3]):
+                                    hr = [t for t in row_texts if _HOUR_RE.match(t)]
+                                else:
+                                    for i, t in enumerate(row_texts[:3]):
+                                        if t.lower().rstrip(",.:;") in _DIAS:
+                                            vals = [v for v in row_texts[i+1:] if _TIME_RE.match(v)]
+                                            gr.append([t.capitalize()] + vals)
+                                            break
+
+                            if gr and hr:
+                                n_c = len(hr)
+                                normed2 = []
+                                for r in gr:
+                                    v = (r[1:] + ["0:00"] * n_c)[:n_c]
+                                    normed2.append([r[0]] + v)
+                                grid_df = pd.DataFrame(normed2, columns=["Día"] + hr)
+                    except Exception:
+                        pass
 
                 # ── Extract KPIs from text ────────────────────────────────
                 kpis = {}
@@ -2030,7 +2170,8 @@ if tab_cc:
                 m = re.search(r"Pendientes\s*\(Sin\s+Atender\)[:\s]+(\d[\d.,]*)", text, re.I)
                 kpis["Pendientes"] = int(m.group(1).replace(",", "").replace(".", "")) if m else 0
 
-                results.append(dict(agente=agente, grid=grid_df, kpis=kpis))
+                results.append(dict(agente=agente, grid=grid_df, kpis=kpis,
+                                    _raw_text=text))  # keep raw for debug
         return results
 
     # ── Helper: convert mm:ss string grid to numeric minutes ─────────────
@@ -2250,6 +2391,15 @@ if tab_cc:
             st.plotly_chart(fig_cc_heat, use_container_width=True, key="cc_heatmap")
         else:
             st.info("No se pudo generar el mapa de calor (tablas de grilla no detectadas).")
+            with st.expander("🛠️ Debug: Ver texto extraído del PDF", expanded=False):
+                for a in agents:
+                    st.markdown(f"**Agente: {a['agente']}** — Grid cols: {list(a['grid'].columns) if not a['grid'].empty else '(vacío)'}")
+                    if not a["grid"].empty:
+                        st.dataframe(a["grid"], use_container_width=True, hide_index=True)
+                    raw = a.get("_raw_text", "")
+                    if raw:
+                        st.code(raw[:1500], language="text")
+                    st.markdown("---")
 
         # ── Individual agent detail ───────────────────────────────────────
         st.markdown("---")
