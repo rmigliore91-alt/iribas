@@ -2188,160 +2188,201 @@ if tab_cc:
     # ── Helper: parse Turnos Agendados PDF ────────────────────────────────
     def _parse_turnos_pdf(pdf_bytes: bytes) -> pd.DataFrame:
         """
-        Parse a pivot-table PDF of scheduled appointments using positional
-        word extraction. This handles blank cells correctly by aligning
-        each value to the nearest column header based on X-coordinate.
+        Parse a pivot-table PDF of scheduled appointments.
+        Hybrid approach: text for values + word positions for column alignment.
+        Handles blank cells by using the longest row as positional reference.
         """
         from collections import defaultdict
+        import unicodedata
 
         with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
-            all_words = []
+            full_text = ""
+            all_page_words = []
             for page in pdf.pages:
-                words = page.extract_words(
-                    keep_blank_chars=True,
-                    x_tolerance=3,
-                    y_tolerance=3,
-                    extra_attrs=["top", "bottom", "x0", "x1"],
-                )
-                all_words.extend(words)
+                full_text += (page.extract_text() or "") + "\n"
+                words = page.extract_words(x_tolerance=1, y_tolerance=3)
+                all_page_words.extend(words)
 
-        if not all_words:
+        if not full_text.strip():
             return pd.DataFrame()
 
-        # ── Group words into rows by Y-position ──────────────────────────
-        y_tolerance = 6
+        lines = [l.strip() for l in full_text.split("\n") if l.strip()]
+
+        # ── Step 1: Parse text lines into agent + values ─────────────────
+        header_line = ""
+        text_data = []  # [(agent_name, [int_values])]
+
+        for ln in lines:
+            tokens = ln.split()
+            if not tokens:
+                continue
+            # Detect header line
+            if any("etiqueta" in t.lower() for t in tokens[:3]) or (
+                "total" in ln.lower() and "general" in ln.lower() and
+                any(kw in ln.lower() for kw in ("audio", "resonancia", "ecograf"))
+            ):
+                header_line = ln
+                continue
+            # Data row: name + numbers
+            num_start = -1
+            for i, t in enumerate(tokens):
+                try:
+                    int(t)
+                    num_start = i
+                    break
+                except ValueError:
+                    continue
+            if num_start > 0:
+                agent_name = "".join(tokens[:num_start])
+                if agent_name.lower() in ("total", "totalgeneral", "grantotal"):
+                    continue
+                values = []
+                for t in tokens[num_start:]:
+                    try:
+                        values.append(int(t))
+                    except ValueError:
+                        try:
+                            values.append(int(t.replace(",", "").replace(".", "")))
+                        except ValueError:
+                            pass
+                if values:
+                    text_data.append((agent_name, values))
+
+        if not text_data:
+            return pd.DataFrame()
+
+        # ── Step 2: Column count from longest row ────────────────────────
+        max_vals = max(len(v) for _, v in text_data)
+
+        # ── Step 3: Extract header names ─────────────────────────────────
+        _KNOWN_STUDIES = [
+            "Audio", "Cardiología", "Densitometría Osea", "Ecografía",
+            "Electroencefalograma", "Electromiografía", "Espirometría",
+            "Mamografía", "PAP", "Radiografía", "Resonancia",
+            "Tomografía", "Total general",
+        ]
+        col_names = []
+        if header_line:
+            hl_lower = header_line.lower()
+            found = []
+            for study in _KNOWN_STUDIES:
+                variants = [study.lower()]
+                no_accent = "".join(
+                    c for c in unicodedata.normalize("NFD", study.lower())
+                    if unicodedata.category(c) != "Mn"
+                )
+                if no_accent != study.lower():
+                    variants.append(no_accent)
+                for var in variants:
+                    pos = hl_lower.find(var)
+                    if pos >= 0:
+                        found.append((pos, study))
+                        break
+            found.sort(key=lambda x: x[0])
+            col_names = [s for _, s in found]
+
+        if len(col_names) < max_vals:
+            if len(col_names) > 0:
+                for i in range(len(col_names), max_vals):
+                    col_names.append(f"Col_{i+1}")
+            else:
+                col_names = _KNOWN_STUDIES[:max_vals] if max_vals <= len(_KNOWN_STUDIES) else \
+                            [f"Col_{i+1}" for i in range(max_vals)]
+        col_names = col_names[:max_vals]
+
+        # ── Step 4: Build positional reference from word data ────────────
+        y_tol = 5
         rows_by_y = defaultdict(list)
-        for w in all_words:
-            y_key = round(w["top"] / y_tolerance) * y_tolerance
+        for w in all_page_words:
+            y_key = round(w["top"] / y_tol) * y_tol
             rows_by_y[y_key].append(w)
 
-        # Sort each row by X-position
-        sorted_y_keys = sorted(rows_by_y.keys())
-        row_list = []
-        for yk in sorted_y_keys:
-            row_words = sorted(rows_by_y[yk], key=lambda w: w["x0"])
-            row_list.append(row_words)
+        word_rows = []
+        for yk in sorted(rows_by_y.keys()):
+            word_rows.append(sorted(rows_by_y[yk], key=lambda w: w["x0"]))
 
-        # ── Find the header row ──────────────────────────────────────────
-        header_row_idx = -1
-        for i, row_words in enumerate(row_list):
-            text_concat = " ".join(w["text"] for w in row_words).lower()
-            if "etiqueta" in text_concat or ("audio" in text_concat and "total" in text_concat):
-                header_row_idx = i
-                break
+        def _is_num(txt):
+            try:
+                int(txt.strip().replace(",", "").replace(".", ""))
+                return True
+            except ValueError:
+                return False
 
-        if header_row_idx < 0:
-            # Fallback: look for a row with many known study types
-            study_kws = {"audio", "cardiología", "cardiologia", "ecografía", "ecografia",
-                         "mamografía", "mamografia", "resonancia", "tomografía", "tomografia",
-                         "radiografía", "radiografia", "pap", "espirometría", "espirometria"}
-            for i, row_words in enumerate(row_list):
-                texts = {w["text"].lower().strip() for w in row_words}
-                if len(texts & study_kws) >= 3:
-                    header_row_idx = i
-                    break
+        # Find reference row (most numeric words) for column X-positions
+        ref_x_positions = []
+        ref_num_count = 0
+        for wr in word_rows:
+            num_words = [w for w in wr if _is_num(w["text"])]
+            if len(num_words) > ref_num_count:
+                ref_num_count = len(num_words)
+                ref_x_positions = [(w["x0"] + w["x1"]) / 2 for w in num_words]
 
-        if header_row_idx < 0:
-            return pd.DataFrame()
-
-        # ── Build column definitions from header row ─────────────────────
-        header_words = row_list[header_row_idx]
-
-        # Merge multi-word column names based on proximity
-        # (e.g. "Densitometría" + "Osea", "Total" + "general")
-        merged_header = []
-        i = 0
-        while i < len(header_words):
-            w = header_words[i]
-            txt = w["text"].strip()
-            # Skip the "Etiquetas de fila" group (first column label)
-            if txt.lower() in ("etiquetas", "de", "fila"):
-                i += 1
-                continue
-            # Check if next word should merge (e.g. "Densitometría" + "Osea")
-            if i + 1 < len(header_words):
-                next_w = header_words[i + 1]
-                next_txt = next_w["text"].strip().lower()
-                gap = next_w["x0"] - w["x1"]
-                if next_txt in ("osea", "ósea", "general") and gap < 30:
-                    merged_header.append({
-                        "name": f"{txt} {next_w['text'].strip()}",
-                        "x_center": (w["x0"] + next_w["x1"]) / 2,
-                        "x0": w["x0"],
-                        "x1": next_w["x1"],
-                    })
-                    i += 2
-                    continue
-            merged_header.append({
-                "name": txt,
-                "x_center": (w["x0"] + w["x1"]) / 2,
-                "x0": w["x0"],
-                "x1": w["x1"],
-            })
-            i += 1
-
-        if not merged_header:
-            return pd.DataFrame()
-
-        col_names = [h["name"] for h in merged_header]
-        col_centers = [h["x_center"] for h in merged_header]
-
-        # ── Parse data rows ──────────────────────────────────────────────
+        # ── Step 5: Build DataFrame ──────────────────────────────────────
         data_rows = []
-        for row_words in row_list[header_row_idx + 1:]:
-            if not row_words:
-                continue
+        for agent_name, values in text_data:
+            if len(values) == max_vals:
+                # Complete row — sequential assignment
+                row_data = {"Agente": agent_name}
+                for ci, cn in enumerate(col_names):
+                    row_data[cn] = values[ci]
+                data_rows.append(row_data)
+            elif ref_x_positions and len(ref_x_positions) == max_vals:
+                # Short row — find word row for positional alignment
+                matched_wr = None
+                agent_norm = agent_name.lower().replace(" ", "")
+                for wr in word_rows:
+                    row_text = "".join(w["text"] for w in wr).lower().replace(" ", "")
+                    if agent_norm in row_text:
+                        matched_wr = wr
+                        break
 
-            # Separate agent name (text) from numeric values
-            # Agent name = leftmost non-numeric words
-            agent_parts = []
-            value_words = []
-            for w in row_words:
-                txt = w["text"].strip()
-                if not txt:
-                    continue
-                # Try to parse as int
-                try:
-                    int(txt.replace(",", "").replace(".", ""))
-                    value_words.append(w)
-                except ValueError:
-                    if not value_words:  # still in agent name zone
-                        agent_parts.append(txt)
-                    # If we already have numbers, skip non-numeric tokens
+                row_data = {"Agente": agent_name}
+                for cn in col_names:
+                    row_data[cn] = 0
 
-            if not agent_parts or not value_words:
-                continue
-
-            agent_name = "".join(agent_parts)  # "LilianDiaz", etc.
-
-            # Skip summary rows like "Total general"
-            if agent_name.lower() in ("total", "totalgeneral", "gran", "grantotal"):
-                continue
-
-            # Assign each numeric value to the nearest column by X-position
-            row_data = {col: 0 for col in col_names}
-            for vw in value_words:
-                val_x = (vw["x0"] + vw["x1"]) / 2
-                # Find nearest column header
-                min_dist = float("inf")
-                best_col = None
-                for ci, cx in enumerate(col_centers):
-                    dist = abs(val_x - cx)
-                    if dist < min_dist:
-                        min_dist = dist
-                        best_col = col_names[ci]
-                if best_col:
-                    try:
-                        row_data[best_col] = int(vw["text"].strip().replace(",", "").replace(".", ""))
-                    except ValueError:
-                        pass
-
-            data_rows.append({"Agente": agent_name, **row_data})
+                if matched_wr:
+                    num_words = [(w, (w["x0"] + w["x1"]) / 2)
+                                 for w in matched_wr if _is_num(w["text"])]
+                    for nw, nx in num_words:
+                        min_dist = float("inf")
+                        best_idx = 0
+                        for ri, rx in enumerate(ref_x_positions):
+                            dist = abs(nx - rx)
+                            if dist < min_dist:
+                                min_dist = dist
+                                best_idx = ri
+                        if best_idx < len(col_names):
+                            try:
+                                row_data[col_names[best_idx]] = int(
+                                    nw["text"].strip().replace(",", "").replace(".", "")
+                                )
+                            except ValueError:
+                                pass
+                else:
+                    # Fallback: assume first columns are blank
+                    offset = max_vals - len(values)
+                    for vi, val in enumerate(values):
+                        idx = vi + offset
+                        if idx < len(col_names):
+                            row_data[col_names[idx]] = val
+                data_rows.append(row_data)
+            else:
+                # No ref — assume first columns blank
+                row_data = {"Agente": agent_name}
+                for cn in col_names:
+                    row_data[cn] = 0
+                offset = max_vals - len(values)
+                for vi, val in enumerate(values):
+                    idx = vi + offset
+                    if idx < len(col_names):
+                        row_data[col_names[idx]] = val
+                data_rows.append(row_data)
 
         if data_rows:
-            df = pd.DataFrame(data_rows)
-            return df
+            return pd.DataFrame(data_rows)
         return pd.DataFrame()
+
+
 
     # ── Session-state store for multi-month data ─────────────────────────
     if "_cc_data" not in st.session_state:
