@@ -2188,98 +2188,159 @@ if tab_cc:
     # ── Helper: parse Turnos Agendados PDF ────────────────────────────────
     def _parse_turnos_pdf(pdf_bytes: bytes) -> pd.DataFrame:
         """
-        Parse a pivot-table PDF of scheduled appointments.
-        Expects: Etiquetas de fila | Audio | Cardiología | ... | Total general
-        Returns a DataFrame with Agente + study-type columns + Total.
+        Parse a pivot-table PDF of scheduled appointments using positional
+        word extraction. This handles blank cells correctly by aligning
+        each value to the nearest column header based on X-coordinate.
         """
-        all_rows = []
-        header = None
-        with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
-            for page in pdf.pages:
-                text = page.extract_text() or ""
-                lines = [l.strip() for l in text.split("\n") if l.strip()]
-                for ln in lines:
-                    tokens = ln.split()
-                    if not tokens:
-                        continue
-                    # Detect header row: contains "Etiquetas" or multiple
-                    # study-type words
-                    if any("etiqueta" in t.lower() for t in tokens[:3]):
-                        # Rebuild header — first field is the label col name
-                        # Find where the real column names start
-                        idx = 0
-                        for i, t in enumerate(tokens):
-                            if t.lower().startswith("etiqueta"):
-                                # "Etiquetas de fila" = 3 tokens
-                                idx = i
-                                break
-                        # Combine "Etiquetas de fila" into one label
-                        rest_start = idx
-                        if idx + 2 < len(tokens) and tokens[idx+1].lower() == "de" and tokens[idx+2].lower() == "fila":
-                            rest_start = idx + 3
-                        elif idx + 1 < len(tokens) and tokens[idx+1].lower() in ("de", "fila"):
-                            rest_start = idx + 2
-                        else:
-                            rest_start = idx + 1
-                        # Handle multi-word column names: "Densitometría Osea",
-                        # "Total general", etc.
-                        raw_cols = tokens[rest_start:]
-                        merged_cols = []
-                        skip = False
-                        for j, c in enumerate(raw_cols):
-                            if skip:
-                                skip = False
-                                continue
-                            # Check if next token is a qualifying word
-                            if j + 1 < len(raw_cols) and raw_cols[j+1].lower() in (
-                                "osea", "ósea", "general"
-                            ):
-                                merged_cols.append(f"{c} {raw_cols[j+1]}")
-                                skip = True
-                            else:
-                                merged_cols.append(c)
-                        header = ["Agente"] + merged_cols
-                        continue
-                    # Data rows: agent name followed by numbers
-                    # Agent name could be one word (LilianDiaz) or multiple
-                    # Identify where the numbers start
-                    num_start = -1
-                    for i, t in enumerate(tokens):
-                        try:
-                            int(t)
-                            num_start = i
-                            break
-                        except ValueError:
-                            continue
-                    if num_start > 0:
-                        agent_name = " ".join(tokens[:num_start])
-                        values = []
-                        for t in tokens[num_start:]:
-                            try:
-                                values.append(int(t))
-                            except ValueError:
-                                try:
-                                    values.append(int(t.replace(",", "").replace(".", "")))
-                                except ValueError:
-                                    pass
-                        if values:
-                            all_rows.append([agent_name] + values)
+        from collections import defaultdict
 
-        if all_rows and header:
-            # Normalize row lengths to match header
-            n_cols = len(header)
-            normed = []
-            for r in all_rows:
-                r_padded = (r + [0] * n_cols)[:n_cols]
-                normed.append(r_padded)
-            df = pd.DataFrame(normed, columns=header)
+        with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
+            all_words = []
+            for page in pdf.pages:
+                words = page.extract_words(
+                    keep_blank_chars=True,
+                    x_tolerance=3,
+                    y_tolerance=3,
+                    extra_attrs=["top", "bottom", "x0", "x1"],
+                )
+                all_words.extend(words)
+
+        if not all_words:
+            return pd.DataFrame()
+
+        # ── Group words into rows by Y-position ──────────────────────────
+        y_tolerance = 6
+        rows_by_y = defaultdict(list)
+        for w in all_words:
+            y_key = round(w["top"] / y_tolerance) * y_tolerance
+            rows_by_y[y_key].append(w)
+
+        # Sort each row by X-position
+        sorted_y_keys = sorted(rows_by_y.keys())
+        row_list = []
+        for yk in sorted_y_keys:
+            row_words = sorted(rows_by_y[yk], key=lambda w: w["x0"])
+            row_list.append(row_words)
+
+        # ── Find the header row ──────────────────────────────────────────
+        header_row_idx = -1
+        for i, row_words in enumerate(row_list):
+            text_concat = " ".join(w["text"] for w in row_words).lower()
+            if "etiqueta" in text_concat or ("audio" in text_concat and "total" in text_concat):
+                header_row_idx = i
+                break
+
+        if header_row_idx < 0:
+            # Fallback: look for a row with many known study types
+            study_kws = {"audio", "cardiología", "cardiologia", "ecografía", "ecografia",
+                         "mamografía", "mamografia", "resonancia", "tomografía", "tomografia",
+                         "radiografía", "radiografia", "pap", "espirometría", "espirometria"}
+            for i, row_words in enumerate(row_list):
+                texts = {w["text"].lower().strip() for w in row_words}
+                if len(texts & study_kws) >= 3:
+                    header_row_idx = i
+                    break
+
+        if header_row_idx < 0:
+            return pd.DataFrame()
+
+        # ── Build column definitions from header row ─────────────────────
+        header_words = row_list[header_row_idx]
+
+        # Merge multi-word column names based on proximity
+        # (e.g. "Densitometría" + "Osea", "Total" + "general")
+        merged_header = []
+        i = 0
+        while i < len(header_words):
+            w = header_words[i]
+            txt = w["text"].strip()
+            # Skip the "Etiquetas de fila" group (first column label)
+            if txt.lower() in ("etiquetas", "de", "fila"):
+                i += 1
+                continue
+            # Check if next word should merge (e.g. "Densitometría" + "Osea")
+            if i + 1 < len(header_words):
+                next_w = header_words[i + 1]
+                next_txt = next_w["text"].strip().lower()
+                gap = next_w["x0"] - w["x1"]
+                if next_txt in ("osea", "ósea", "general") and gap < 30:
+                    merged_header.append({
+                        "name": f"{txt} {next_w['text'].strip()}",
+                        "x_center": (w["x0"] + next_w["x1"]) / 2,
+                        "x0": w["x0"],
+                        "x1": next_w["x1"],
+                    })
+                    i += 2
+                    continue
+            merged_header.append({
+                "name": txt,
+                "x_center": (w["x0"] + w["x1"]) / 2,
+                "x0": w["x0"],
+                "x1": w["x1"],
+            })
+            i += 1
+
+        if not merged_header:
+            return pd.DataFrame()
+
+        col_names = [h["name"] for h in merged_header]
+        col_centers = [h["x_center"] for h in merged_header]
+
+        # ── Parse data rows ──────────────────────────────────────────────
+        data_rows = []
+        for row_words in row_list[header_row_idx + 1:]:
+            if not row_words:
+                continue
+
+            # Separate agent name (text) from numeric values
+            # Agent name = leftmost non-numeric words
+            agent_parts = []
+            value_words = []
+            for w in row_words:
+                txt = w["text"].strip()
+                if not txt:
+                    continue
+                # Try to parse as int
+                try:
+                    int(txt.replace(",", "").replace(".", ""))
+                    value_words.append(w)
+                except ValueError:
+                    if not value_words:  # still in agent name zone
+                        agent_parts.append(txt)
+                    # If we already have numbers, skip non-numeric tokens
+
+            if not agent_parts or not value_words:
+                continue
+
+            agent_name = "".join(agent_parts)  # "LilianDiaz", etc.
+
+            # Skip summary rows like "Total general"
+            if agent_name.lower() in ("total", "totalgeneral", "gran", "grantotal"):
+                continue
+
+            # Assign each numeric value to the nearest column by X-position
+            row_data = {col: 0 for col in col_names}
+            for vw in value_words:
+                val_x = (vw["x0"] + vw["x1"]) / 2
+                # Find nearest column header
+                min_dist = float("inf")
+                best_col = None
+                for ci, cx in enumerate(col_centers):
+                    dist = abs(val_x - cx)
+                    if dist < min_dist:
+                        min_dist = dist
+                        best_col = col_names[ci]
+                if best_col:
+                    try:
+                        row_data[best_col] = int(vw["text"].strip().replace(",", "").replace(".", ""))
+                    except ValueError:
+                        pass
+
+            data_rows.append({"Agente": agent_name, **row_data})
+
+        if data_rows:
+            df = pd.DataFrame(data_rows)
             return df
-        elif all_rows:
-            # No explicit header found — generate generic ones
-            max_len = max(len(r) for r in all_rows)
-            header = ["Agente"] + [f"Tipo_{i}" for i in range(1, max_len)]
-            normed = [(r + [0] * max_len)[:max_len] for r in all_rows]
-            return pd.DataFrame(normed, columns=header)
         return pd.DataFrame()
 
     # ── Session-state store for multi-month data ─────────────────────────
