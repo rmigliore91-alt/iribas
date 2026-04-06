@@ -150,6 +150,7 @@ PLOTLY_LAYOUT = dict(
     font=dict(family="Inter, sans-serif", color="#e6edf3"),
     margin=dict(l=40, r=40, t=60, b=40),
     title_font=dict(size=16, color="#e6edf3"),
+    title_subtitle_text="",
     hoverlabel=dict(
         bgcolor="#1c2333", font_size=13,
         font_family="Inter, sans-serif", bordercolor="#30363d",
