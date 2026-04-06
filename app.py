@@ -2382,7 +2382,11 @@ if tab_cc:
         if st.session_state.get("_cc_last_file") != file_id:
             with st.spinner("Extrayendo datos de Call Center…"):
                 raw = cc_pdf.read()
-                agents = _parse_callcenter_pdf(raw)
+                try:
+                    agents = _parse_callcenter_pdf(raw)
+                except Exception as _parse_err:
+                    agents = []
+                    st.error(f"Error al procesar el PDF de Call Center: {_parse_err}")
             if agents:
                 st.session_state["_cc_data"][month_label] = agents
                 st.session_state["_cc_last_file"] = file_id
@@ -2399,7 +2403,11 @@ if tab_cc:
         if st.session_state.get("_cc_last_turnos") != file_id_t:
             with st.spinner("Extrayendo datos de Turnos Agendados…"):
                 raw_t = turnos_pdf.read()
-                df_turnos = _parse_turnos_pdf(raw_t)
+                try:
+                    df_turnos = _parse_turnos_pdf(raw_t)
+                except Exception as _parse_err:
+                    df_turnos = pd.DataFrame()
+                    st.error(f"Error al procesar el PDF de Turnos: {_parse_err}")
             if not df_turnos.empty:
                 st.session_state["_cc_turnos"][month_label] = df_turnos
                 st.session_state["_cc_last_turnos"] = file_id_t
@@ -2408,9 +2416,12 @@ if tab_cc:
             else:
                 st.error("No se pudieron extraer datos del PDF de Turnos. Verifica el formato.")
                 with st.expander("🛠️ Debug: texto extraído del PDF de Turnos"):
-                    with pdfplumber.open(io.BytesIO(turnos_pdf.read() if hasattr(turnos_pdf, 'read') else raw_t)) as _dbg:
-                        for _p in _dbg.pages:
-                            st.code((_p.extract_text() or "")[:2000], language="text")
+                    try:
+                        with pdfplumber.open(io.BytesIO(raw_t)) as _dbg:
+                            for _p in _dbg.pages:
+                                st.code((_p.extract_text() or "")[:2000], language="text")
+                    except Exception as e:
+                        st.error(f"Error al leer el PDF: {e}")
     elif turnos_pdf and not month_label:
         st.warning("⚠️ Escribe una etiqueta de mes antes de procesar el PDF de Turnos.")
 
