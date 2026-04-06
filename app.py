@@ -558,11 +558,12 @@ _all_pages = [
     "🔎 Análisis de Estudios",         # 7 → tab10
     "🛡️ Ranking de Seguros",           # 8 → tab7
     "📝 Agentes de Fichaje",           # 9 → tab12
-    "⚖️ Comparativa",                  # 10 → tab8
+    "📞 KPI Call Center",              # 10 → tab_cc
+    "⚖️ Comparativa",                  # 11 → tab8
 ]
 
 if user_role == "admin":
-    _all_pages.append("⚙️ Panel Admin")  # 11 → tab9
+    _all_pages.append("⚙️ Panel Admin")  # 12 → tab9
 
 with st.sidebar:
     st.markdown("##### 📍 Menú Principal")
@@ -586,27 +587,28 @@ with st.sidebar:
     _nav_group("GENERAL", [0])
     _nav_group("FINANCIERO", [1, 2])
     _nav_group("MÉDICOS", [3, 4])
-    _nav_group("INSTITUCIÓN", [5, 6, 7, 8, 9])
-    _nav_group("ANÁLISIS", [10])
+    _nav_group("INSTITUCIÓN", [5, 6, 7, 8, 9, 10])
+    _nav_group("ANÁLISIS", [11])
     if user_role == "admin":
-        _nav_group("ADMINISTRACIÓN", [11])
+        _nav_group("ADMINISTRACIÓN", [12])
 
     current_tab = st.session_state["_active_page"]
     st.markdown("---")
 
 # Map grouped menu → same tab flags used by all content blocks
-tab1  = current_tab == _all_pages[0]   # Dashboard General
-tab3  = current_tab == _all_pages[1]   # KPIs Financieros
-tab11 = current_tab == _all_pages[2]   # Micro-Rentabilidad
-tab5  = current_tab == _all_pages[3]   # Médicos Tratantes
-tab6  = current_tab == _all_pages[4]   # Radiólogos Informantes
-tab2  = current_tab == _all_pages[5]   # Mapa de Calor
-tab4  = current_tab == _all_pages[6]   # Rendimiento por Sector
-tab10 = current_tab == _all_pages[7]   # Análisis de Estudios
-tab7  = current_tab == _all_pages[8]   # Ranking de Seguros
-tab12 = current_tab == _all_pages[9]   # Agentes de Fichaje
-tab8  = current_tab == _all_pages[10]  # Comparativa
-tab9  = current_tab == _all_pages[11] if user_role == "admin" else False
+tab1   = current_tab == _all_pages[0]   # Dashboard General
+tab3   = current_tab == _all_pages[1]   # KPIs Financieros
+tab11  = current_tab == _all_pages[2]   # Micro-Rentabilidad
+tab5   = current_tab == _all_pages[3]   # Médicos Tratantes
+tab6   = current_tab == _all_pages[4]   # Radiólogos Informantes
+tab2   = current_tab == _all_pages[5]   # Mapa de Calor
+tab4   = current_tab == _all_pages[6]   # Rendimiento por Sector
+tab10  = current_tab == _all_pages[7]   # Análisis de Estudios
+tab7   = current_tab == _all_pages[8]   # Ranking de Seguros
+tab12  = current_tab == _all_pages[9]   # Agentes de Fichaje
+tab_cc = current_tab == _all_pages[10]  # KPI Call Center
+tab8   = current_tab == _all_pages[11]  # Comparativa
+tab9   = current_tab == _all_pages[12] if user_role == "admin" else False
 
 # ──────────────────────────────────────────────────────────────────────────────
 # SIDEBAR – DATA UPLOAD & FILTERS
@@ -1960,6 +1962,439 @@ if tab12:
             df_tabla["Facturación"] = df_tabla["Facturación"].apply(lambda x: f"₲ {x:,.0f}")
             df_tabla["Promedio_por_Estudio"] = df_tabla["Promedio_por_Estudio"].apply(lambda x: f"₲ {x:,.0f}")
             st.dataframe(df_tabla, use_container_width=True, hide_index=True, height=400)
+
+# ── TAB CC — KPI Call Center ────────────────────────────────────────────────
+if tab_cc:
+    import pdfplumber, re, io
+
+    st.markdown("### 📞 KPI Call Center")
+    st.markdown(
+        "Sube el reporte PDF mensual de Call Center. Cada página corresponde a un agente."
+    )
+
+    # ── Helper: parse one PDF into a list of agent dicts ──────────────────
+    def _parse_callcenter_pdf(pdf_bytes: bytes) -> list[dict]:
+        """
+        Extract data from each page of the call-center PDF.
+        Returns a list where each element is a dict with:
+          - agente: str
+          - grid: pd.DataFrame (rows=days, cols=hours, values=call counts / durations)
+          - kpis: dict with parsed KPI values
+        """
+        results = []
+        with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
+            for page in pdf.pages:
+                text = page.extract_text() or ""
+                lines = [l.strip() for l in text.split("\n") if l.strip()]
+                if not lines:
+                    continue
+
+                # ── Agent name: first line that is NOT a table header ─────
+                agente = lines[0] if lines else "Desconocido"
+
+                # ── Extract the table ─────────────────────────────────────
+                tables = page.extract_tables()
+                grid_df = pd.DataFrame()
+                if tables:
+                    tbl = tables[0]  # main grid is the first table
+                    # First row = header: Día, 8:00, 9:00, ... 19:00
+                    header = [str(c).strip() if c else "" for c in tbl[0]]
+                    rows_data = []
+                    for row in tbl[1:]:
+                        cleaned = [str(c).strip() if c else "" for c in row]
+                        if cleaned and cleaned[0]:  # has a day name
+                            rows_data.append(cleaned)
+                    if header and rows_data:
+                        grid_df = pd.DataFrame(rows_data, columns=header[:len(rows_data[0])])
+
+                # ── Extract KPIs from text ────────────────────────────────
+                kpis = {}
+
+                # Tiempo Promedio Respuesta
+                m = re.search(r"Tiempo\s+Promedio\s+Respuesta[:\s]+(\d+:\d+)", text, re.I)
+                kpis["Tiempo Promedio Respuesta"] = m.group(1) if m else "N/D"
+
+                # Oportunidades Nuevas
+                m = re.search(r"Oportunidades\s+Nuevas[:\s]+(\d[\d.,]*)", text, re.I)
+                kpis["Oportunidades Nuevas"] = int(m.group(1).replace(",", "").replace(".", "")) if m else 0
+
+                # Tasa de Gestión
+                m = re.search(r"Tasa\s+de\s+Gesti[oó]n[:\s]+([\d.,]+)\s*%", text, re.I)
+                kpis["Tasa de Gestión (%)"] = float(m.group(1).replace(",", ".")) if m else 0.0
+
+                # Tasa de Cierre
+                m = re.search(r"Tasa\s+de\s+Cierre[:\s]+([\d.,]+)\s*%", text, re.I)
+                kpis["Tasa de Cierre (%)"] = float(m.group(1).replace(",", ".")) if m else 0.0
+
+                # Pendientes (Sin Atender)
+                m = re.search(r"Pendientes\s*\(Sin\s+Atender\)[:\s]+(\d[\d.,]*)", text, re.I)
+                kpis["Pendientes"] = int(m.group(1).replace(",", "").replace(".", "")) if m else 0
+
+                results.append(dict(agente=agente, grid=grid_df, kpis=kpis))
+        return results
+
+    # ── Helper: convert mm:ss string grid to numeric minutes ─────────────
+    def _time_to_minutes(val: str) -> float:
+        """Convert 'M:SS' or 'H:MM' to total minutes as float."""
+        try:
+            parts = val.strip().split(":")
+            if len(parts) == 2:
+                return int(parts[0]) + int(parts[1]) / 60.0
+            return float(val)
+        except Exception:
+            return 0.0
+
+    # ── Session-state store for multi-month data ─────────────────────────
+    if "_cc_data" not in st.session_state:
+        st.session_state["_cc_data"] = {}  # {month_label: [agent_dicts]}
+
+    # ── Upload UI ────────────────────────────────────────────────────────
+    st.markdown("---")
+    col_up1, col_up2 = st.columns([1, 2])
+    with col_up1:
+        month_label = st.text_input(
+            "📅 Etiqueta del Mes",
+            placeholder="Ej: Marzo 2026",
+            help="Nombre descriptivo para identificar este reporte.",
+        )
+    with col_up2:
+        cc_pdf = st.file_uploader(
+            "📂 Subir PDF de Call Center",
+            type=["pdf"],
+            key="cc_pdf_upload",
+            help="PDF con una página por agente."
+        )
+
+    if cc_pdf and month_label:
+        file_id = f"{cc_pdf.name}_{cc_pdf.size}_{month_label}"
+        if st.session_state.get("_cc_last_file") != file_id:
+            with st.spinner("Extrayendo datos del PDF…"):
+                raw = cc_pdf.read()
+                agents = _parse_callcenter_pdf(raw)
+            if agents:
+                st.session_state["_cc_data"][month_label] = agents
+                st.session_state["_cc_last_file"] = file_id
+                st.success(f"✅ Se extrajeron **{len(agents)} agentes** para **{month_label}**.")
+                st.rerun()
+            else:
+                st.error("No se pudieron extraer datos del PDF. Verifica el formato.")
+    elif cc_pdf and not month_label:
+        st.warning("⚠️ Escribe una etiqueta de mes antes de procesar el PDF.")
+
+    # ── Show loaded months ───────────────────────────────────────────────
+    cc_data = st.session_state.get("_cc_data", {})
+    if cc_data:
+        st.markdown("---")
+        st.markdown("#### 📋 Meses cargados")
+        cols_months = st.columns(min(len(cc_data), 5))
+        for i, (ml, agents) in enumerate(cc_data.items()):
+            with cols_months[i % len(cols_months)]:
+                st.markdown(
+                    f"""<div style="background:#161b22;border:1px solid #30363d;border-radius:10px;
+                    padding:14px;text-align:center;">
+                    <span style="font-size:1.4rem;">📅</span><br>
+                    <b style="color:#e6edf3;">{ml}</b><br>
+                    <span style="color:#8b949e;font-size:0.85rem;">{len(agents)} agentes</span></div>""",
+                    unsafe_allow_html=True,
+                )
+        # Option to clear data
+        if st.button("🗑️ Limpiar todos los datos cargados", key="cc_clear"):
+            st.session_state["_cc_data"] = {}
+            st.session_state.pop("_cc_last_file", None)
+            st.rerun()
+
+        # ── Month selector ────────────────────────────────────────────────
+        st.markdown("---")
+        month_options = list(cc_data.keys())
+        sel_month = st.selectbox("Seleccionar mes para análisis:", month_options, key="cc_sel_month")
+        agents = cc_data[sel_month]
+
+        # ── Build unified DataFrame for KPIs ─────────────────────────────
+        kpi_rows = []
+        for a in agents:
+            row = {"Agente": a["agente"]}
+            row.update(a["kpis"])
+            kpi_rows.append(row)
+        df_kpi = pd.DataFrame(kpi_rows)
+
+        # ── KPI Summary Cards ────────────────────────────────────────────
+        st.markdown("---")
+        st.markdown(f"### 📊 Resumen KPI — {sel_month}")
+
+        total_oportunidades = df_kpi["Oportunidades Nuevas"].sum()
+        avg_gestion = df_kpi["Tasa de Gestión (%)"].mean()
+        avg_cierre = df_kpi["Tasa de Cierre (%)"].mean()
+        total_pendientes = df_kpi["Pendientes"].sum()
+
+        k1, k2, k3, k4 = st.columns(4)
+        k1.metric("🎯 Oportunidades Nuevas", f"{total_oportunidades:,}")
+        k2.metric("📈 Tasa Gestión Promedio", f"{avg_gestion:.1f}%")
+        k3.metric("🏆 Tasa Cierre Promedio", f"{avg_cierre:.1f}%")
+        k4.metric("⏳ Pendientes Totales", f"{total_pendientes:,}")
+
+        # ── Table: KPIs per Agent ─────────────────────────────────────────
+        st.markdown("---")
+        st.markdown("#### 📋 Detalle por Agente")
+        df_show = df_kpi.copy()
+        df_show["Tasa de Gestión (%)"] = df_show["Tasa de Gestión (%)"].apply(lambda x: f"{x:.1f}%")
+        df_show["Tasa de Cierre (%)"] = df_show["Tasa de Cierre (%)"].apply(lambda x: f"{x:.1f}%")
+        df_show["Oportunidades Nuevas"] = df_show["Oportunidades Nuevas"].apply(lambda x: f"{x:,}")
+        st.dataframe(df_show, use_container_width=True, hide_index=True)
+
+        # ── Bar chart: Oportunidades Nuevas per Agent ─────────────────────
+        st.markdown("---")
+        st.markdown("#### 🎯 Oportunidades Nuevas por Agente")
+        df_opp = df_kpi.sort_values("Oportunidades Nuevas", ascending=True)
+        fig_opp = px.bar(
+            df_opp, y="Agente", x="Oportunidades Nuevas", orientation="h",
+            text="Oportunidades Nuevas", color="Oportunidades Nuevas",
+            color_continuous_scale=["#1a1e2e", "#58a6ff"],
+        )
+        fig_opp.update_traces(
+            texttemplate="%{text:,}", textposition="outside", textfont_size=12,
+            hovertemplate="<b>%{y}</b><br>Oportunidades: %{x:,}<extra></extra>",
+        )
+        fig_opp.update_layout(
+            **PLOTLY_LAYOUT, title=None,
+            height=max(380, len(df_opp) * 48),
+            yaxis=dict(title=""),
+            xaxis=dict(title="Oportunidades Nuevas", gridcolor="rgba(48,54,61,0.4)"),
+            coloraxis_showscale=False,
+        )
+        st.plotly_chart(fig_opp, use_container_width=True, key="cc_opp_bar")
+
+        # ── Dual bar: Tasa de Gestión vs Tasa de Cierre ───────────────────
+        st.markdown("---")
+        st.markdown("#### 📈 Tasas de Gestión y Cierre por Agente")
+        df_tasas = df_kpi[["Agente", "Tasa de Gestión (%)", "Tasa de Cierre (%)"]].melt(
+            id_vars="Agente", var_name="Indicador", value_name="Porcentaje"
+        )
+        fig_tasas = px.bar(
+            df_tasas, x="Agente", y="Porcentaje", color="Indicador",
+            barmode="group", text="Porcentaje",
+            color_discrete_map={
+                "Tasa de Gestión (%)": "#3fb950",
+                "Tasa de Cierre (%)": "#58a6ff",
+            },
+        )
+        fig_tasas.update_traces(
+            texttemplate="%{text:.1f}%", textposition="outside", textfont_size=11,
+            hovertemplate="<b>%{x}</b><br>%{data.name}: %{y:.1f}%<extra></extra>",
+        )
+        fig_tasas.update_layout(
+            **PLOTLY_LAYOUT, title=None, height=450,
+            xaxis=dict(title="", tickangle=-35),
+            yaxis=dict(title="Porcentaje (%)", gridcolor="rgba(48,54,61,0.4)"),
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5),
+        )
+        st.plotly_chart(fig_tasas, use_container_width=True, key="cc_tasas_bar")
+
+        # ── Pendientes bar ────────────────────────────────────────────────
+        st.markdown("---")
+        st.markdown("#### ⏳ Pendientes (Sin Atender) por Agente")
+        df_pend = df_kpi.sort_values("Pendientes", ascending=True)
+        fig_pend = px.bar(
+            df_pend, y="Agente", x="Pendientes", orientation="h",
+            text="Pendientes", color="Pendientes",
+            color_continuous_scale=["#1a1e2e", "#f78166"],
+        )
+        fig_pend.update_traces(
+            texttemplate="%{text:,}", textposition="outside", textfont_size=12,
+            hovertemplate="<b>%{y}</b><br>Pendientes: %{x:,}<extra></extra>",
+        )
+        fig_pend.update_layout(
+            **PLOTLY_LAYOUT, title=None,
+            height=max(380, len(df_pend) * 48),
+            yaxis=dict(title=""),
+            xaxis=dict(title="Pendientes (Sin Atender)", gridcolor="rgba(48,54,61,0.4)"),
+            coloraxis_showscale=False,
+        )
+        st.plotly_chart(fig_pend, use_container_width=True, key="cc_pend_bar")
+
+        # ── Heatmap: Agent × Hour activity ────────────────────────────────
+        st.markdown("---")
+        st.markdown("#### 🔥 Mapa de Calor de Actividad por Hora")
+        st.markdown("Suma de actividad de todos los días por agente y franja horaria.")
+
+        heat_rows = []
+        for a in agents:
+            gdf = a["grid"]
+            if gdf.empty:
+                continue
+            # Columns: Día, 8:00, 9:00, ..., 19:00
+            hour_cols = [c for c in gdf.columns if re.match(r"\d+:\d+", c)]
+            for hc in hour_cols:
+                total = gdf[hc].apply(_time_to_minutes).sum()
+                heat_rows.append({"Agente": a["agente"], "Hora": hc, "Actividad": round(total, 1)})
+
+        if heat_rows:
+            df_heat = pd.DataFrame(heat_rows)
+            mat = df_heat.pivot(index="Agente", columns="Hora", values="Actividad").fillna(0)
+
+            # Sort hours numerically
+            sorted_hours = sorted(mat.columns, key=lambda h: int(h.split(":")[0]))
+            mat = mat[sorted_hours]
+
+            fig_cc_heat = px.imshow(
+                mat, text_auto=".1f", aspect="auto",
+                labels=dict(x="Hora del Día", y="Agente", color="Minutos"),
+                color_continuous_scale=HEATMAP_COLORS,
+            )
+            fig_cc_heat.update_layout(
+                **PLOTLY_LAYOUT, title=None, height=max(380, len(mat) * 45),
+                xaxis=dict(side="top"),
+            )
+            fig_cc_heat.update_traces(
+                hovertemplate="<b>%{y}</b> a las <b>%{x}</b><br>Actividad: %{z:.1f} min<extra></extra>"
+            )
+            st.plotly_chart(fig_cc_heat, use_container_width=True, key="cc_heatmap")
+        else:
+            st.info("No se pudo generar el mapa de calor (tablas de grilla no detectadas).")
+
+        # ── Individual agent detail ───────────────────────────────────────
+        st.markdown("---")
+        st.markdown("#### 🔍 Detalle Individual de Agente")
+        agent_names = [a["agente"] for a in agents]
+        sel_agent = st.selectbox("Seleccionar agente:", agent_names, key="cc_sel_agent")
+
+        sel_data = next((a for a in agents if a["agente"] == sel_agent), None)
+        if sel_data:
+            # KPI mini-cards for selected agent
+            kp = sel_data["kpis"]
+            c1, c2, c3, c4, c5 = st.columns(5)
+            c1.metric("⏱️ T. Promedio Resp.", kp.get("Tiempo Promedio Respuesta", "N/D"))
+            c2.metric("🎯 Oportunidades", f"{kp.get('Oportunidades Nuevas', 0):,}")
+            c3.metric("📈 Gestión", f"{kp.get('Tasa de Gestión (%)', 0):.1f}%")
+            c4.metric("🏆 Cierre", f"{kp.get('Tasa de Cierre (%)', 0):.1f}%")
+            c5.metric("⏳ Pendientes", f"{kp.get('Pendientes', 0):,}")
+
+            # Show grid table if available
+            gdf = sel_data["grid"]
+            if not gdf.empty:
+                st.markdown("##### Grilla de Actividad (valores originales)")
+                st.dataframe(gdf, use_container_width=True, hide_index=True)
+
+                # Individual heatmap for this agent
+                hour_cols = [c for c in gdf.columns if re.match(r"\d+:\d+", c)]
+                day_col = gdf.columns[0] if gdf.columns[0] not in hour_cols else "Día"
+                if hour_cols and day_col in gdf.columns:
+                    mat_agent = gdf.set_index(day_col)[hour_cols].map(_time_to_minutes)
+                    sorted_hours_a = sorted(hour_cols, key=lambda h: int(h.split(":")[0]))
+                    mat_agent = mat_agent[sorted_hours_a]
+
+                    fig_agent_heat = px.imshow(
+                        mat_agent, text_auto=".1f", aspect="auto",
+                        labels=dict(x="Hora", y="Día", color="Minutos"),
+                        color_continuous_scale=[
+                            [0.0, "#0d1117"], [0.3, "#1a1e2e"], [0.5, "#2a4a3a"],
+                            [0.7, "#2d7a4a"], [0.9, "#3fb950"], [1.0, "#56d364"],
+                        ],
+                    )
+                    fig_agent_heat.update_layout(
+                        **PLOTLY_LAYOUT,
+                        title=f"Actividad por Día y Hora — {sel_agent}",
+                        height=350,
+                        xaxis=dict(side="top"),
+                    )
+                    fig_agent_heat.update_traces(
+                        hovertemplate="<b>%{y}</b> a las <b>%{x}</b><br>%{z:.1f} min<extra></extra>"
+                    )
+                    st.plotly_chart(fig_agent_heat, use_container_width=True, key="cc_agent_heat")
+
+        # ── Multi-month comparison (if 2+ months loaded) ──────────────────
+        if len(cc_data) >= 2:
+            st.markdown("---")
+            st.markdown("#### 📈 Evolución Mensual entre Períodos")
+
+            evo_rows = []
+            for ml, ags in cc_data.items():
+                for a in ags:
+                    evo_rows.append({
+                        "Mes": ml,
+                        "Agente": a["agente"],
+                        "Oportunidades Nuevas": a["kpis"].get("Oportunidades Nuevas", 0),
+                        "Tasa de Gestión (%)": a["kpis"].get("Tasa de Gestión (%)", 0),
+                        "Tasa de Cierre (%)": a["kpis"].get("Tasa de Cierre (%)", 0),
+                        "Pendientes": a["kpis"].get("Pendientes", 0),
+                    })
+            df_evo = pd.DataFrame(evo_rows)
+
+            # Total KPI by month
+            df_evo_totals = df_evo.groupby("Mes").agg(
+                Oportunidades=("Oportunidades Nuevas", "sum"),
+                Gestión_Prom=("Tasa de Gestión (%)", "mean"),
+                Cierre_Prom=("Tasa de Cierre (%)", "mean"),
+                Pendientes=("Pendientes", "sum"),
+            ).reset_index()
+
+            col_evo_a, col_evo_b = st.columns(2)
+            with col_evo_a:
+                fig_evo_opp = px.bar(
+                    df_evo_totals, x="Mes", y="Oportunidades", text="Oportunidades",
+                    color_discrete_sequence=["#58a6ff"],
+                )
+                fig_evo_opp.update_traces(
+                    texttemplate="%{text:,}", textposition="outside",
+                    hovertemplate="<b>%{x}</b><br>Oportunidades: %{y:,}<extra></extra>",
+                )
+                fig_evo_opp.update_layout(
+                    **PLOTLY_LAYOUT, title="Oportunidades Nuevas por Mes",
+                    height=380,
+                    xaxis=dict(title=""),
+                    yaxis=dict(title="Oportunidades", gridcolor="rgba(48,54,61,0.4)"),
+                )
+                st.plotly_chart(fig_evo_opp, use_container_width=True, key="cc_evo_opp")
+
+            with col_evo_b:
+                fig_evo_pend = px.bar(
+                    df_evo_totals, x="Mes", y="Pendientes", text="Pendientes",
+                    color_discrete_sequence=["#f78166"],
+                )
+                fig_evo_pend.update_traces(
+                    texttemplate="%{text:,}", textposition="outside",
+                    hovertemplate="<b>%{x}</b><br>Pendientes: %{y:,}<extra></extra>",
+                )
+                fig_evo_pend.update_layout(
+                    **PLOTLY_LAYOUT, title="Pendientes por Mes",
+                    height=380,
+                    xaxis=dict(title=""),
+                    yaxis=dict(title="Pendientes", gridcolor="rgba(48,54,61,0.4)"),
+                )
+                st.plotly_chart(fig_evo_pend, use_container_width=True, key="cc_evo_pend")
+
+            # Per-agent evolution line chart
+            st.markdown("##### Evolución por Agente")
+            kpi_sel = st.selectbox(
+                "KPI a visualizar:",
+                ["Oportunidades Nuevas", "Tasa de Gestión (%)", "Tasa de Cierre (%)", "Pendientes"],
+                key="cc_evo_kpi",
+            )
+            fig_evo_line = px.line(
+                df_evo, x="Mes", y=kpi_sel, color="Agente",
+                markers=True, text=kpi_sel,
+            )
+            fig_evo_line.update_traces(textposition="top center", textfont_size=10)
+            fig_evo_line.update_layout(
+                **PLOTLY_LAYOUT, title=None, height=450,
+                xaxis=dict(title=""),
+                yaxis=dict(title=kpi_sel, gridcolor="rgba(48,54,61,0.4)"),
+                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5),
+            )
+            st.plotly_chart(fig_evo_line, use_container_width=True, key="cc_evo_line")
+
+    else:
+        st.markdown("---")
+        st.markdown(
+            """<div style="text-align:center; padding:60px 20px; border:2px dashed #30363d;
+            border-radius:16px; background:linear-gradient(135deg, rgba(88,166,255,0.04) 0%, rgba(188,140,255,0.04) 100%);">
+            <div style="font-size:3.5rem; margin-bottom:12px;">📞</div>
+            <h3 style="color:#e6edf3; margin-bottom:8px;">Sin datos de Call Center</h3>
+            <p style="color:#8b949e; max-width:450px; margin:auto; line-height:1.6;">
+                Sube un archivo <code style="color:#58a6ff;">PDF</code> mensual de Call Center
+                indicando el mes correspondiente para comenzar el análisis.
+            </p></div>""",
+            unsafe_allow_html=True,
+        )
 
 # ── TAB 8 — Comparativa entre Períodos ─────────────────────────────────────
 if tab8:
