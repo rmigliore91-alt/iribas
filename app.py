@@ -2468,19 +2468,39 @@ if tab_cc:
                 st.markdown("---")
                 st.markdown("#### 📅 Análisis de Turnos Agendados")
 
-                # Normalize agent names for matching (strip spaces & lowercase for lookup)
+                # Normalize agent names for matching
+                # CC PDF uses short names (Lilian, Eva) while Turnos uses
+                # concatenated full names (LilianDiaz, EvaRivas).
                 def _norm_name(n):
-                    return re.sub(r"\s+", "", str(n).strip().lower())
+                    return re.sub(r"[\s_\-]+", "", str(n).strip().lower())
+
+                def _match_agent(turnos_name, cc_names_map):
+                    """Find the best CC agent match for a turnos agent name.
+                    Strategy: prefix match (one name starts with the other),
+                    then substring, then exact."""
+                    tn = _norm_name(turnos_name)
+                    # 1. Exact match
+                    if tn in cc_names_map:
+                        return cc_names_map[tn]
+                    # 2. CC name is prefix of turnos name (e.g. "lilian" → "liliandiaz")
+                    for cc_norm, val in cc_names_map.items():
+                        if tn.startswith(cc_norm) or cc_norm.startswith(tn):
+                            return val
+                    # 3. Substring (one contains the other)
+                    for cc_norm, val in cc_names_map.items():
+                        if cc_norm in tn or tn in cc_norm:
+                            return val
+                    return 0
 
                 # Merge turnos with oportunidades
                 df_t_merged = df_turnos_month.copy()
                 total_col = df_t_merged.columns[-1]  # "Total general" or last col
                 study_cols = [c for c in df_t_merged.columns if c not in ("Agente", total_col)]
 
-                # Build mapping of normed names → oportunidades
+                # Build mapping of normed CC names → oportunidades
                 opp_map = {_norm_name(r["Agente"]): r["Oportunidades Nuevas"] for _, r in df_kpi.iterrows()}
                 df_t_merged["Oportunidades"] = df_t_merged["Agente"].apply(
-                    lambda a: opp_map.get(_norm_name(a), 0)
+                    lambda a: _match_agent(a, opp_map)
                 )
                 df_t_merged["Conversión (%)"] = (
                     df_t_merged[total_col] / df_t_merged["Oportunidades"].replace(0, float("nan")) * 100
