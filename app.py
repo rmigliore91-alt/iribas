@@ -2355,474 +2355,502 @@ if tab_cc:
 
     # ── Show loaded months ───────────────────────────────────────────────
     cc_data = st.session_state.get("_cc_data", {})
-    if cc_data:
+    turnos_data = st.session_state.get("_cc_turnos", {})
+    all_months = sorted(set(list(cc_data.keys()) + list(turnos_data.keys())))
+
+    if all_months:
         st.markdown("---")
-        st.markdown("#### 📋 Meses cargados")
-        cols_months = st.columns(min(len(cc_data), 5))
-        for i, (ml, agents) in enumerate(cc_data.items()):
-            with cols_months[i % len(cols_months)]:
+        st.markdown("#### 📋 Datos Cargados")
+
+        for ml in all_months:
+            has_cc = ml in cc_data
+            has_t = ml in turnos_data
+
+            # Info badges
+            badges = []
+            if has_cc:
+                n_agents = len(cc_data[ml])
+                badges.append(f"📊 Call Center ({n_agents} agentes)")
+            if has_t:
+                df_t = turnos_data[ml]
+                total_t = int(df_t.iloc[:, -1].sum()) if not df_t.empty else 0
+                badges.append(f"📅 Turnos ({len(df_t)} agentes · {total_t:,} turnos)")
+
+            badge_html = " &nbsp;·&nbsp; ".join(badges)
+
+            col_info, col_del_cc, col_del_t, col_del_all = st.columns([5, 1.5, 1.5, 1.5])
+            with col_info:
                 st.markdown(
-                    f"""<div style="background:#161b22;border:1px solid #30363d;border-radius:10px;
-                    padding:14px;text-align:center;">
-                    <span style="font-size:1.4rem;">📅</span><br>
-                    <b style="color:#e6edf3;">{ml}</b><br>
-                    <span style="color:#8b949e;font-size:0.85rem;">{len(agents)} agentes</span></div>""",
+                    f"""<div style="background:#161b22;border:1px solid #30363d;border-radius:8px;
+                    padding:10px 16px;display:flex;align-items:center;gap:12px;">
+                    <span style="font-size:1.2rem;">📅</span>
+                    <div><b style="color:#e6edf3;">{ml}</b><br>
+                    <span style="color:#8b949e;font-size:0.8rem;">{badge_html}</span></div></div>""",
                     unsafe_allow_html=True,
                 )
-        # Show turnos loaded status
-        turnos_data = st.session_state.get("_cc_turnos", {})
-        if turnos_data:
-            st.markdown("#### 📅 Turnos Agendados cargados")
-            turnos_months = st.columns(min(len(turnos_data), 5))
-            for i, (ml, df_t) in enumerate(turnos_data.items()):
-                with turnos_months[i % len(turnos_months)]:
-                    st.markdown(
-                        f"""<div style="background:#161b22;border:1px solid #30363d;border-radius:10px;
-                        padding:14px;text-align:center;">
-                        <span style="font-size:1.4rem;">📅</span><br>
-                        <b style="color:#e6edf3;">{ml}</b><br>
-                        <span style="color:#8b949e;font-size:0.85rem;">{len(df_t)} agentes · {df_t.iloc[:, -1].sum() if not df_t.empty else 0:,} turnos</span></div>""",
-                        unsafe_allow_html=True,
-                    )
+            with col_del_cc:
+                if has_cc:
+                    if st.button("🗑️ Call Center", key=f"del_cc_{ml}", use_container_width=True):
+                        del st.session_state["_cc_data"][ml]
+                        st.session_state.pop("_cc_last_file", None)
+                        st.rerun()
+            with col_del_t:
+                if has_t:
+                    if st.button("🗑️ Turnos", key=f"del_t_{ml}", use_container_width=True):
+                        del st.session_state["_cc_turnos"][ml]
+                        st.session_state.pop("_cc_last_turnos", None)
+                        st.rerun()
+            with col_del_all:
+                if has_cc or has_t:
+                    if st.button("🗑️ Todo", key=f"del_all_{ml}", use_container_width=True, type="primary"):
+                        if ml in st.session_state["_cc_data"]:
+                            del st.session_state["_cc_data"][ml]
+                        if ml in st.session_state["_cc_turnos"]:
+                            del st.session_state["_cc_turnos"][ml]
+                        st.session_state.pop("_cc_last_file", None)
+                        st.session_state.pop("_cc_last_turnos", None)
+                        st.rerun()
 
-        # Option to clear data
-        if st.button("🗑️ Limpiar todos los datos cargados", key="cc_clear"):
-            st.session_state["_cc_data"] = {}
-            st.session_state["_cc_turnos"] = {}
-            st.session_state.pop("_cc_last_file", None)
-            st.session_state.pop("_cc_last_turnos", None)
-            st.rerun()
+        # Global clear (only if 2+ months)
+        if len(all_months) >= 2:
+            if st.button("🗑️ Limpiar todos los meses", key="cc_clear", type="secondary"):
+                st.session_state["_cc_data"] = {}
+                st.session_state["_cc_turnos"] = {}
+                st.session_state.pop("_cc_last_file", None)
+                st.session_state.pop("_cc_last_turnos", None)
+                st.rerun()
 
-        # ── Month selector ────────────────────────────────────────────────
-        st.markdown("---")
-        month_options = list(cc_data.keys())
-        sel_month = st.selectbox("Seleccionar mes para análisis:", month_options, key="cc_sel_month")
-        agents = cc_data[sel_month]
-
-        # ── Build unified DataFrame for KPIs ─────────────────────────────
-        kpi_rows = []
-        for a in agents:
-            row = {"Agente": a["agente"]}
-            row.update(a["kpis"])
-            kpi_rows.append(row)
-        df_kpi = pd.DataFrame(kpi_rows)
-
-        # ── KPI Summary Cards ────────────────────────────────────────────
-        st.markdown("---")
-        st.markdown(f"### 📊 Resumen KPI — {sel_month}")
-
-        total_oportunidades = df_kpi["Oportunidades Nuevas"].sum()
-        avg_gestion = df_kpi["Tasa de Gestión (%)"].mean()
-        avg_cierre = df_kpi["Tasa de Cierre (%)"].mean()
-        total_pendientes = df_kpi["Pendientes"].sum()
-
-        # Check if turnos exist for this month
-        turnos_data = st.session_state.get("_cc_turnos", {})
-        df_turnos_month = turnos_data.get(sel_month, pd.DataFrame())
-        has_turnos = not df_turnos_month.empty
-        total_turnos = int(df_turnos_month.iloc[:, -1].sum()) if has_turnos else 0
-        tasa_conversion = (total_turnos / total_oportunidades * 100) if total_oportunidades > 0 and has_turnos else None
-
-        if has_turnos:
-            k1, k2, k3, k4, k5, k6 = st.columns(6)
-        else:
-            k1, k2, k3, k4 = st.columns(4)
-        k1.metric("🎯 Oportunidades Nuevas", f"{total_oportunidades:,}")
-        k2.metric("📈 Tasa Gestión Promedio", f"{avg_gestion:.1f}%")
-        k3.metric("🏆 Tasa Cierre Promedio", f"{avg_cierre:.1f}%")
-        k4.metric("⏳ Pendientes Totales", f"{total_pendientes:,}")
-        if has_turnos:
-            k5.metric("📅 Turnos Agendados", f"{total_turnos:,}")
-            k6.metric("🔄 Conversión Opp→Turno", f"{tasa_conversion:.1f}%" if tasa_conversion else "N/D")
-
-        # ── Turnos Analysis Section ───────────────────────────────────────
-        if has_turnos:
+        # ── Month selector (only if CC data exists) ───────────────────────
+        if cc_data:
             st.markdown("---")
-            st.markdown("#### 📅 Análisis de Turnos Agendados")
+            month_options = list(cc_data.keys())
+            sel_month = st.selectbox("Seleccionar mes para análisis:", month_options, key="cc_sel_month")
+            agents = cc_data[sel_month]
 
-            # Normalize agent names for matching (strip spaces & lowercase for lookup)
-            def _norm_name(n):
-                return re.sub(r"\s+", "", str(n).strip().lower())
+            # ── Build unified DataFrame for KPIs ─────────────────────────
+            kpi_rows = []
+            for a in agents:
+                row = {"Agente": a["agente"]}
+                row.update(a["kpis"])
+                kpi_rows.append(row)
+            df_kpi = pd.DataFrame(kpi_rows)
 
-            # Merge turnos with oportunidades
-            df_t_merged = df_turnos_month.copy()
-            total_col = df_t_merged.columns[-1]  # "Total general" or last col
-            study_cols = [c for c in df_t_merged.columns if c not in ("Agente", total_col)]
+            # ── KPI Summary Cards ────────────────────────────────────────────
+            st.markdown("---")
+            st.markdown(f"### 📊 Resumen KPI — {sel_month}")
 
-            # Build mapping of normed names → oportunidades
-            opp_map = {_norm_name(r["Agente"]): r["Oportunidades Nuevas"] for _, r in df_kpi.iterrows()}
-            df_t_merged["Oportunidades"] = df_t_merged["Agente"].apply(
-                lambda a: opp_map.get(_norm_name(a), 0)
-            )
-            df_t_merged["Conversión (%)"] = (
-                df_t_merged[total_col] / df_t_merged["Oportunidades"].replace(0, float("nan")) * 100
-            ).round(1)
+            total_oportunidades = df_kpi["Oportunidades Nuevas"].sum()
+            avg_gestion = df_kpi["Tasa de Gestión (%)"].mean()
+            avg_cierre = df_kpi["Tasa de Cierre (%)"].mean()
+            total_pendientes = df_kpi["Pendientes"].sum()
 
-            # KPI table with turnos + conversion
-            st.markdown("##### Turnos y Conversión por Agente")
-            df_t_show = df_t_merged[["Agente", total_col, "Oportunidades", "Conversión (%)"]].copy()
-            df_t_show.columns = ["Agente", "Turnos Agendados", "Oportunidades", "Conversión (%)"]
-            df_t_show["Conversión (%)"] = df_t_show["Conversión (%)"].apply(
-                lambda x: f"{x:.1f}%" if pd.notna(x) else "N/D"
-            )
-            st.dataframe(df_t_show, use_container_width=True, hide_index=True)
+            # Check if turnos exist for this month
+            turnos_data = st.session_state.get("_cc_turnos", {})
+            df_turnos_month = turnos_data.get(sel_month, pd.DataFrame())
+            has_turnos = not df_turnos_month.empty
+            total_turnos = int(df_turnos_month.iloc[:, -1].sum()) if has_turnos else 0
+            tasa_conversion = (total_turnos / total_oportunidades * 100) if total_oportunidades > 0 and has_turnos else None
 
-            # Bar chart: Turnos vs Oportunidades
-            col_t1, col_t2 = st.columns(2)
-            with col_t1:
-                df_t_bar = df_t_merged[["Agente", total_col]].sort_values(total_col, ascending=True)
-                fig_t_bar = px.bar(
-                    df_t_bar, y="Agente", x=total_col, orientation="h",
-                    text=total_col, color=total_col,
-                    color_continuous_scale=["#1a1e2e", "#3fb950"],
-                )
-                fig_t_bar.update_traces(
-                    texttemplate="%{text:,}", textposition="outside", textfont_size=12,
-                    hovertemplate="<b>%{y}</b><br>Turnos: %{x:,}<extra></extra>",
-                )
-                fig_t_bar.update_layout(
-                    **PLOTLY_LAYOUT, title="Turnos Agendados por Agente",
-                    height=max(380, len(df_t_bar) * 48),
-                    yaxis=dict(title=""),
-                    xaxis=dict(title="Turnos", gridcolor="rgba(48,54,61,0.4)"),
-                    coloraxis_showscale=False,
-                )
-                st.plotly_chart(fig_t_bar, use_container_width=True, key="cc_turnos_bar")
+            if has_turnos:
+                k1, k2, k3, k4, k5, k6 = st.columns(6)
+            else:
+                k1, k2, k3, k4 = st.columns(4)
+            k1.metric("🎯 Oportunidades Nuevas", f"{total_oportunidades:,}")
+            k2.metric("📈 Tasa Gestión Promedio", f"{avg_gestion:.1f}%")
+            k3.metric("🏆 Tasa Cierre Promedio", f"{avg_cierre:.1f}%")
+            k4.metric("⏳ Pendientes Totales", f"{total_pendientes:,}")
+            if has_turnos:
+                k5.metric("📅 Turnos Agendados", f"{total_turnos:,}")
+                k6.metric("🔄 Conversión Opp→Turno", f"{tasa_conversion:.1f}%" if tasa_conversion else "N/D")
 
-            with col_t2:
-                df_conv = df_t_merged[["Agente", "Conversión (%)"]].dropna().sort_values("Conversión (%)", ascending=True)
-                fig_conv = px.bar(
-                    df_conv, y="Agente", x="Conversión (%)", orientation="h",
-                    text="Conversión (%)", color="Conversión (%)",
-                    color_continuous_scale=["#f78166", "#3fb950"],
-                )
-                fig_conv.update_traces(
-                    texttemplate="%{text:.1f}%", textposition="outside", textfont_size=12,
-                    hovertemplate="<b>%{y}</b><br>Conversión: %{x:.1f}%<extra></extra>",
-                )
-                fig_conv.update_layout(
-                    **PLOTLY_LAYOUT, title="Tasa de Conversión (Opp → Turno)",
-                    height=max(380, len(df_conv) * 48),
-                    yaxis=dict(title=""),
-                    xaxis=dict(title="Conversión (%)", gridcolor="rgba(48,54,61,0.4)"),
-                    coloraxis_showscale=False,
-                )
-                st.plotly_chart(fig_conv, use_container_width=True, key="cc_conv_bar")
-
-            # Stacked bar: Turnos by study type per agent
-            if study_cols:
+            # ── Turnos Analysis Section ───────────────────────────────────────
+            if has_turnos:
                 st.markdown("---")
-                st.markdown("##### 🔬 Distribución de Turnos por Tipo de Estudio")
-                df_melt = df_turnos_month.melt(
-                    id_vars="Agente", value_vars=study_cols,
-                    var_name="Tipo de Estudio", value_name="Turnos"
-                )
-                df_melt = df_melt[df_melt["Turnos"] > 0]
-                fig_study = px.bar(
-                    df_melt, x="Agente", y="Turnos", color="Tipo de Estudio",
-                    text="Turnos",
-                )
-                fig_study.update_traces(
-                    textposition="inside", textfont_size=9,
-                    hovertemplate="<b>%{x}</b><br>%{data.name}: %{y:,}<extra></extra>",
-                )
-                fig_study.update_layout(
-                    **PLOTLY_LAYOUT, title=None, height=500,
-                    xaxis=dict(title="", tickangle=-35),
-                    yaxis=dict(title="Turnos", gridcolor="rgba(48,54,61,0.4)"),
-                    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5),
-                    barmode="stack",
-                )
-                st.plotly_chart(fig_study, use_container_width=True, key="cc_study_stack")
+                st.markdown("#### 📅 Análisis de Turnos Agendados")
 
-                # Donut: overall study type distribution
-                col_d1, col_d2 = st.columns(2)
-                with col_d1:
-                    df_tipo_total = df_melt.groupby("Tipo de Estudio")["Turnos"].sum().reset_index()
-                    df_tipo_total = df_tipo_total.sort_values("Turnos", ascending=False)
-                    fig_tipo_donut = px.pie(
-                        df_tipo_total, names="Tipo de Estudio", values="Turnos",
-                        hole=0.45,
+                # Normalize agent names for matching (strip spaces & lowercase for lookup)
+                def _norm_name(n):
+                    return re.sub(r"\s+", "", str(n).strip().lower())
+
+                # Merge turnos with oportunidades
+                df_t_merged = df_turnos_month.copy()
+                total_col = df_t_merged.columns[-1]  # "Total general" or last col
+                study_cols = [c for c in df_t_merged.columns if c not in ("Agente", total_col)]
+
+                # Build mapping of normed names → oportunidades
+                opp_map = {_norm_name(r["Agente"]): r["Oportunidades Nuevas"] for _, r in df_kpi.iterrows()}
+                df_t_merged["Oportunidades"] = df_t_merged["Agente"].apply(
+                    lambda a: opp_map.get(_norm_name(a), 0)
+                )
+                df_t_merged["Conversión (%)"] = (
+                    df_t_merged[total_col] / df_t_merged["Oportunidades"].replace(0, float("nan")) * 100
+                ).round(1)
+
+                # KPI table with turnos + conversion
+                st.markdown("##### Turnos y Conversión por Agente")
+                df_t_show = df_t_merged[["Agente", total_col, "Oportunidades", "Conversión (%)"]].copy()
+                df_t_show.columns = ["Agente", "Turnos Agendados", "Oportunidades", "Conversión (%)"]
+                df_t_show["Conversión (%)"] = df_t_show["Conversión (%)"].apply(
+                    lambda x: f"{x:.1f}%" if pd.notna(x) else "N/D"
+                )
+                st.dataframe(df_t_show, use_container_width=True, hide_index=True)
+
+                # Bar chart: Turnos vs Oportunidades
+                col_t1, col_t2 = st.columns(2)
+                with col_t1:
+                    df_t_bar = df_t_merged[["Agente", total_col]].sort_values(total_col, ascending=True)
+                    fig_t_bar = px.bar(
+                        df_t_bar, y="Agente", x=total_col, orientation="h",
+                        text=total_col, color=total_col,
+                        color_continuous_scale=["#1a1e2e", "#3fb950"],
                     )
-                    fig_tipo_donut.update_traces(
-                        textinfo="percent+value", textfont_size=11,
-                        hovertemplate="<b>%{label}</b><br>Turnos: %{value:,}<br>%{percent}<extra></extra>",
+                    fig_t_bar.update_traces(
+                        texttemplate="%{text:,}", textposition="outside", textfont_size=12,
+                        hovertemplate="<b>%{y}</b><br>Turnos: %{x:,}<extra></extra>",
                     )
-                    fig_tipo_donut.update_layout(
-                        **PLOTLY_LAYOUT, title="Mix de Estudios Agendados",
-                        height=420, showlegend=True,
-                        legend=dict(orientation="v", font=dict(size=10)),
+                    fig_t_bar.update_layout(
+                        **PLOTLY_LAYOUT, title="Turnos Agendados por Agente",
+                        height=max(380, len(df_t_bar) * 48),
+                        yaxis=dict(title=""),
+                        xaxis=dict(title="Turnos", gridcolor="rgba(48,54,61,0.4)"),
+                        coloraxis_showscale=False,
                     )
-                    st.plotly_chart(fig_tipo_donut, use_container_width=True, key="cc_tipo_donut")
+                    st.plotly_chart(fig_t_bar, use_container_width=True, key="cc_turnos_bar")
 
-                with col_d2:
-                    # Top study types
-                    st.markdown("##### 🏆 Top Tipos de Estudio")
-                    df_tipo_display = df_tipo_total.copy()
-                    df_tipo_display["% del Total"] = (
-                        df_tipo_display["Turnos"] / df_tipo_display["Turnos"].sum() * 100
-                    ).round(1).apply(lambda x: f"{x:.1f}%")
-                    df_tipo_display["Turnos"] = df_tipo_display["Turnos"].apply(lambda x: f"{x:,}")
-                    st.dataframe(df_tipo_display, use_container_width=True, hide_index=True)
+                with col_t2:
+                    df_conv = df_t_merged[["Agente", "Conversión (%)"]].dropna().sort_values("Conversión (%)", ascending=True)
+                    fig_conv = px.bar(
+                        df_conv, y="Agente", x="Conversión (%)", orientation="h",
+                        text="Conversión (%)", color="Conversión (%)",
+                        color_continuous_scale=["#f78166", "#3fb950"],
+                    )
+                    fig_conv.update_traces(
+                        texttemplate="%{text:.1f}%", textposition="outside", textfont_size=12,
+                        hovertemplate="<b>%{y}</b><br>Conversión: %{x:.1f}%<extra></extra>",
+                    )
+                    fig_conv.update_layout(
+                        **PLOTLY_LAYOUT, title="Tasa de Conversión (Opp → Turno)",
+                        height=max(380, len(df_conv) * 48),
+                        yaxis=dict(title=""),
+                        xaxis=dict(title="Conversión (%)", gridcolor="rgba(48,54,61,0.4)"),
+                        coloraxis_showscale=False,
+                    )
+                    st.plotly_chart(fig_conv, use_container_width=True, key="cc_conv_bar")
 
-        # ── Table: KPIs per Agent ─────────────────────────────────────────
-        st.markdown("---")
-        st.markdown("#### 📋 Detalle KPI por Agente")
-        df_show = df_kpi.copy()
-        df_show["Tasa de Gestión (%)"] = df_show["Tasa de Gestión (%)"].apply(lambda x: f"{x:.1f}%")
-        df_show["Tasa de Cierre (%)"] = df_show["Tasa de Cierre (%)"].apply(lambda x: f"{x:.1f}%")
-        df_show["Oportunidades Nuevas"] = df_show["Oportunidades Nuevas"].apply(lambda x: f"{x:,}")
-        st.dataframe(df_show, use_container_width=True, hide_index=True)
-
-        # ── Bar chart: Oportunidades Nuevas per Agent ─────────────────────
-        st.markdown("---")
-        st.markdown("#### 🎯 Oportunidades Nuevas por Agente")
-        df_opp = df_kpi.sort_values("Oportunidades Nuevas", ascending=True)
-        fig_opp = px.bar(
-            df_opp, y="Agente", x="Oportunidades Nuevas", orientation="h",
-            text="Oportunidades Nuevas", color="Oportunidades Nuevas",
-            color_continuous_scale=["#1a1e2e", "#58a6ff"],
-        )
-        fig_opp.update_traces(
-            texttemplate="%{text:,}", textposition="outside", textfont_size=12,
-            hovertemplate="<b>%{y}</b><br>Oportunidades: %{x:,}<extra></extra>",
-        )
-        fig_opp.update_layout(
-            **PLOTLY_LAYOUT, title=None,
-            height=max(380, len(df_opp) * 48),
-            yaxis=dict(title=""),
-            xaxis=dict(title="Oportunidades Nuevas", gridcolor="rgba(48,54,61,0.4)"),
-            coloraxis_showscale=False,
-        )
-        st.plotly_chart(fig_opp, use_container_width=True, key="cc_opp_bar")
-
-        # ── Dual bar: Tasa de Gestión vs Tasa de Cierre ───────────────────
-        st.markdown("---")
-        st.markdown("#### 📈 Tasas de Gestión y Cierre por Agente")
-        df_tasas = df_kpi[["Agente", "Tasa de Gestión (%)", "Tasa de Cierre (%)"]].melt(
-            id_vars="Agente", var_name="Indicador", value_name="Porcentaje"
-        )
-        fig_tasas = px.bar(
-            df_tasas, x="Agente", y="Porcentaje", color="Indicador",
-            barmode="group", text="Porcentaje",
-            color_discrete_map={
-                "Tasa de Gestión (%)": "#3fb950",
-                "Tasa de Cierre (%)": "#58a6ff",
-            },
-        )
-        fig_tasas.update_traces(
-            texttemplate="%{text:.1f}%", textposition="outside", textfont_size=11,
-            hovertemplate="<b>%{x}</b><br>%{data.name}: %{y:.1f}%<extra></extra>",
-        )
-        fig_tasas.update_layout(
-            **PLOTLY_LAYOUT, title=None, height=450,
-            xaxis=dict(title="", tickangle=-35),
-            yaxis=dict(title="Porcentaje (%)", gridcolor="rgba(48,54,61,0.4)"),
-            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5),
-        )
-        st.plotly_chart(fig_tasas, use_container_width=True, key="cc_tasas_bar")
-
-        # ── Pendientes bar ────────────────────────────────────────────────
-        st.markdown("---")
-        st.markdown("#### ⏳ Pendientes (Sin Atender) por Agente")
-        df_pend = df_kpi.sort_values("Pendientes", ascending=True)
-        fig_pend = px.bar(
-            df_pend, y="Agente", x="Pendientes", orientation="h",
-            text="Pendientes", color="Pendientes",
-            color_continuous_scale=["#1a1e2e", "#f78166"],
-        )
-        fig_pend.update_traces(
-            texttemplate="%{text:,}", textposition="outside", textfont_size=12,
-            hovertemplate="<b>%{y}</b><br>Pendientes: %{x:,}<extra></extra>",
-        )
-        fig_pend.update_layout(
-            **PLOTLY_LAYOUT, title=None,
-            height=max(380, len(df_pend) * 48),
-            yaxis=dict(title=""),
-            xaxis=dict(title="Pendientes (Sin Atender)", gridcolor="rgba(48,54,61,0.4)"),
-            coloraxis_showscale=False,
-        )
-        st.plotly_chart(fig_pend, use_container_width=True, key="cc_pend_bar")
-
-        # ── Heatmap: Agent × Hour activity ────────────────────────────────
-        st.markdown("---")
-        st.markdown("#### 🔥 Mapa de Calor de Actividad por Hora")
-        st.markdown("Suma de actividad de todos los días por agente y franja horaria.")
-
-        heat_rows = []
-        for a in agents:
-            gdf = a["grid"]
-            if gdf.empty:
-                continue
-            # Columns: Día, 8:00, 9:00, ..., 19:00
-            hour_cols = [c for c in gdf.columns if re.match(r"\d+:\d+", c)]
-            for hc in hour_cols:
-                total = gdf[hc].apply(_time_to_minutes).sum()
-                heat_rows.append({"Agente": a["agente"], "Hora": hc, "Actividad": round(total, 1)})
-
-        if heat_rows:
-            df_heat = pd.DataFrame(heat_rows)
-            mat = df_heat.pivot(index="Agente", columns="Hora", values="Actividad").fillna(0)
-
-            # Sort hours numerically
-            sorted_hours = sorted(mat.columns, key=lambda h: int(h.split(":")[0]))
-            mat = mat[sorted_hours]
-
-            fig_cc_heat = px.imshow(
-                mat, text_auto=".1f", aspect="auto",
-                labels=dict(x="Hora del Día", y="Agente", color="Minutos"),
-                color_continuous_scale=HEATMAP_COLORS,
-            )
-            fig_cc_heat.update_layout(
-                **PLOTLY_LAYOUT, title=None, height=max(380, len(mat) * 45),
-                xaxis=dict(side="top"),
-            )
-            fig_cc_heat.update_traces(
-                hovertemplate="<b>%{y}</b> a las <b>%{x}</b><br>Actividad: %{z:.1f} min<extra></extra>"
-            )
-            st.plotly_chart(fig_cc_heat, use_container_width=True, key="cc_heatmap")
-        else:
-            st.info("No se pudo generar el mapa de calor (tablas de grilla no detectadas).")
-            with st.expander("🛠️ Debug: Ver texto extraído del PDF", expanded=False):
-                for a in agents:
-                    st.markdown(f"**Agente: {a['agente']}** — Grid cols: {list(a['grid'].columns) if not a['grid'].empty else '(vacío)'}")
-                    if not a["grid"].empty:
-                        st.dataframe(a["grid"], use_container_width=True, hide_index=True)
-                    raw = a.get("_raw_text", "")
-                    if raw:
-                        st.code(raw[:1500], language="text")
+                # Stacked bar: Turnos by study type per agent
+                if study_cols:
                     st.markdown("---")
-
-        # ── Individual agent detail ───────────────────────────────────────
-        st.markdown("---")
-        st.markdown("#### 🔍 Detalle Individual de Agente")
-        agent_names = [a["agente"] for a in agents]
-        sel_agent = st.selectbox("Seleccionar agente:", agent_names, key="cc_sel_agent")
-
-        sel_data = next((a for a in agents if a["agente"] == sel_agent), None)
-        if sel_data:
-            # KPI mini-cards for selected agent
-            kp = sel_data["kpis"]
-            c1, c2, c3, c4, c5 = st.columns(5)
-            c1.metric("⏱️ T. Promedio Resp.", kp.get("Tiempo Promedio Respuesta", "N/D"))
-            c2.metric("🎯 Oportunidades", f"{kp.get('Oportunidades Nuevas', 0):,}")
-            c3.metric("📈 Gestión", f"{kp.get('Tasa de Gestión (%)', 0):.1f}%")
-            c4.metric("🏆 Cierre", f"{kp.get('Tasa de Cierre (%)', 0):.1f}%")
-            c5.metric("⏳ Pendientes", f"{kp.get('Pendientes', 0):,}")
-
-            # Show grid table if available
-            gdf = sel_data["grid"]
-            if not gdf.empty:
-                st.markdown("##### Grilla de Actividad (valores originales)")
-                st.dataframe(gdf, use_container_width=True, hide_index=True)
-
-                # Individual heatmap for this agent
-                hour_cols = [c for c in gdf.columns if re.match(r"\d+:\d+", c)]
-                day_col = gdf.columns[0] if gdf.columns[0] not in hour_cols else "Día"
-                if hour_cols and day_col in gdf.columns:
-                    mat_agent = gdf.set_index(day_col)[hour_cols].map(_time_to_minutes)
-                    sorted_hours_a = sorted(hour_cols, key=lambda h: int(h.split(":")[0]))
-                    mat_agent = mat_agent[sorted_hours_a]
-
-                    fig_agent_heat = px.imshow(
-                        mat_agent, text_auto=".1f", aspect="auto",
-                        labels=dict(x="Hora", y="Día", color="Minutos"),
-                        color_continuous_scale=[
-                            [0.0, "#0d1117"], [0.3, "#1a1e2e"], [0.5, "#2a4a3a"],
-                            [0.7, "#2d7a4a"], [0.9, "#3fb950"], [1.0, "#56d364"],
-                        ],
+                    st.markdown("##### 🔬 Distribución de Turnos por Tipo de Estudio")
+                    df_melt = df_turnos_month.melt(
+                        id_vars="Agente", value_vars=study_cols,
+                        var_name="Tipo de Estudio", value_name="Turnos"
                     )
-                    fig_agent_heat.update_layout(
-                        **PLOTLY_LAYOUT,
-                        title=f"Actividad por Día y Hora — {sel_agent}",
-                        height=350,
-                        xaxis=dict(side="top"),
+                    df_melt = df_melt[df_melt["Turnos"] > 0]
+                    fig_study = px.bar(
+                        df_melt, x="Agente", y="Turnos", color="Tipo de Estudio",
+                        text="Turnos",
                     )
-                    fig_agent_heat.update_traces(
-                        hovertemplate="<b>%{y}</b> a las <b>%{x}</b><br>%{z:.1f} min<extra></extra>"
+                    fig_study.update_traces(
+                        textposition="inside", textfont_size=9,
+                        hovertemplate="<b>%{x}</b><br>%{data.name}: %{y:,}<extra></extra>",
                     )
-                    st.plotly_chart(fig_agent_heat, use_container_width=True, key="cc_agent_heat")
+                    fig_study.update_layout(
+                        **PLOTLY_LAYOUT, title=None, height=500,
+                        xaxis=dict(title="", tickangle=-35),
+                        yaxis=dict(title="Turnos", gridcolor="rgba(48,54,61,0.4)"),
+                        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5),
+                        barmode="stack",
+                    )
+                    st.plotly_chart(fig_study, use_container_width=True, key="cc_study_stack")
 
-        # ── Multi-month comparison (if 2+ months loaded) ──────────────────
-        if len(cc_data) >= 2:
+                    # Donut: overall study type distribution
+                    col_d1, col_d2 = st.columns(2)
+                    with col_d1:
+                        df_tipo_total = df_melt.groupby("Tipo de Estudio")["Turnos"].sum().reset_index()
+                        df_tipo_total = df_tipo_total.sort_values("Turnos", ascending=False)
+                        fig_tipo_donut = px.pie(
+                            df_tipo_total, names="Tipo de Estudio", values="Turnos",
+                            hole=0.45,
+                        )
+                        fig_tipo_donut.update_traces(
+                            textinfo="percent+value", textfont_size=11,
+                            hovertemplate="<b>%{label}</b><br>Turnos: %{value:,}<br>%{percent}<extra></extra>",
+                        )
+                        fig_tipo_donut.update_layout(
+                            **PLOTLY_LAYOUT, title="Mix de Estudios Agendados",
+                            height=420, showlegend=True,
+                            legend=dict(orientation="v", font=dict(size=10)),
+                        )
+                        st.plotly_chart(fig_tipo_donut, use_container_width=True, key="cc_tipo_donut")
+
+                    with col_d2:
+                        # Top study types
+                        st.markdown("##### 🏆 Top Tipos de Estudio")
+                        df_tipo_display = df_tipo_total.copy()
+                        df_tipo_display["% del Total"] = (
+                            df_tipo_display["Turnos"] / df_tipo_display["Turnos"].sum() * 100
+                        ).round(1).apply(lambda x: f"{x:.1f}%")
+                        df_tipo_display["Turnos"] = df_tipo_display["Turnos"].apply(lambda x: f"{x:,}")
+                        st.dataframe(df_tipo_display, use_container_width=True, hide_index=True)
+
+            # ── Table: KPIs per Agent ─────────────────────────────────────────
             st.markdown("---")
-            st.markdown("#### 📈 Evolución Mensual entre Períodos")
+            st.markdown("#### 📋 Detalle KPI por Agente")
+            df_show = df_kpi.copy()
+            df_show["Tasa de Gestión (%)"] = df_show["Tasa de Gestión (%)"].apply(lambda x: f"{x:.1f}%")
+            df_show["Tasa de Cierre (%)"] = df_show["Tasa de Cierre (%)"].apply(lambda x: f"{x:.1f}%")
+            df_show["Oportunidades Nuevas"] = df_show["Oportunidades Nuevas"].apply(lambda x: f"{x:,}")
+            st.dataframe(df_show, use_container_width=True, hide_index=True)
 
-            evo_rows = []
-            for ml, ags in cc_data.items():
-                for a in ags:
-                    evo_rows.append({
-                        "Mes": ml,
-                        "Agente": a["agente"],
-                        "Oportunidades Nuevas": a["kpis"].get("Oportunidades Nuevas", 0),
-                        "Tasa de Gestión (%)": a["kpis"].get("Tasa de Gestión (%)", 0),
-                        "Tasa de Cierre (%)": a["kpis"].get("Tasa de Cierre (%)", 0),
-                        "Pendientes": a["kpis"].get("Pendientes", 0),
-                    })
-            df_evo = pd.DataFrame(evo_rows)
-
-            # Total KPI by month
-            df_evo_totals = df_evo.groupby("Mes").agg(
-                Oportunidades=("Oportunidades Nuevas", "sum"),
-                Gestión_Prom=("Tasa de Gestión (%)", "mean"),
-                Cierre_Prom=("Tasa de Cierre (%)", "mean"),
-                Pendientes=("Pendientes", "sum"),
-            ).reset_index()
-
-            col_evo_a, col_evo_b = st.columns(2)
-            with col_evo_a:
-                fig_evo_opp = px.bar(
-                    df_evo_totals, x="Mes", y="Oportunidades", text="Oportunidades",
-                    color_discrete_sequence=["#58a6ff"],
-                )
-                fig_evo_opp.update_traces(
-                    texttemplate="%{text:,}", textposition="outside",
-                    hovertemplate="<b>%{x}</b><br>Oportunidades: %{y:,}<extra></extra>",
-                )
-                fig_evo_opp.update_layout(
-                    **PLOTLY_LAYOUT, title="Oportunidades Nuevas por Mes",
-                    height=380,
-                    xaxis=dict(title=""),
-                    yaxis=dict(title="Oportunidades", gridcolor="rgba(48,54,61,0.4)"),
-                )
-                st.plotly_chart(fig_evo_opp, use_container_width=True, key="cc_evo_opp")
-
-            with col_evo_b:
-                fig_evo_pend = px.bar(
-                    df_evo_totals, x="Mes", y="Pendientes", text="Pendientes",
-                    color_discrete_sequence=["#f78166"],
-                )
-                fig_evo_pend.update_traces(
-                    texttemplate="%{text:,}", textposition="outside",
-                    hovertemplate="<b>%{x}</b><br>Pendientes: %{y:,}<extra></extra>",
-                )
-                fig_evo_pend.update_layout(
-                    **PLOTLY_LAYOUT, title="Pendientes por Mes",
-                    height=380,
-                    xaxis=dict(title=""),
-                    yaxis=dict(title="Pendientes", gridcolor="rgba(48,54,61,0.4)"),
-                )
-                st.plotly_chart(fig_evo_pend, use_container_width=True, key="cc_evo_pend")
-
-            # Per-agent evolution line chart
-            st.markdown("##### Evolución por Agente")
-            kpi_sel = st.selectbox(
-                "KPI a visualizar:",
-                ["Oportunidades Nuevas", "Tasa de Gestión (%)", "Tasa de Cierre (%)", "Pendientes"],
-                key="cc_evo_kpi",
+            # ── Bar chart: Oportunidades Nuevas per Agent ─────────────────────
+            st.markdown("---")
+            st.markdown("#### 🎯 Oportunidades Nuevas por Agente")
+            df_opp = df_kpi.sort_values("Oportunidades Nuevas", ascending=True)
+            fig_opp = px.bar(
+                df_opp, y="Agente", x="Oportunidades Nuevas", orientation="h",
+                text="Oportunidades Nuevas", color="Oportunidades Nuevas",
+                color_continuous_scale=["#1a1e2e", "#58a6ff"],
             )
-            fig_evo_line = px.line(
-                df_evo, x="Mes", y=kpi_sel, color="Agente",
-                markers=True, text=kpi_sel,
+            fig_opp.update_traces(
+                texttemplate="%{text:,}", textposition="outside", textfont_size=12,
+                hovertemplate="<b>%{y}</b><br>Oportunidades: %{x:,}<extra></extra>",
             )
-            fig_evo_line.update_traces(textposition="top center", textfont_size=10)
-            fig_evo_line.update_layout(
+            fig_opp.update_layout(
+                **PLOTLY_LAYOUT, title=None,
+                height=max(380, len(df_opp) * 48),
+                yaxis=dict(title=""),
+                xaxis=dict(title="Oportunidades Nuevas", gridcolor="rgba(48,54,61,0.4)"),
+                coloraxis_showscale=False,
+            )
+            st.plotly_chart(fig_opp, use_container_width=True, key="cc_opp_bar")
+
+            # ── Dual bar: Tasa de Gestión vs Tasa de Cierre ───────────────────
+            st.markdown("---")
+            st.markdown("#### 📈 Tasas de Gestión y Cierre por Agente")
+            df_tasas = df_kpi[["Agente", "Tasa de Gestión (%)", "Tasa de Cierre (%)"]].melt(
+                id_vars="Agente", var_name="Indicador", value_name="Porcentaje"
+            )
+            fig_tasas = px.bar(
+                df_tasas, x="Agente", y="Porcentaje", color="Indicador",
+                barmode="group", text="Porcentaje",
+                color_discrete_map={
+                    "Tasa de Gestión (%)": "#3fb950",
+                    "Tasa de Cierre (%)": "#58a6ff",
+                },
+            )
+            fig_tasas.update_traces(
+                texttemplate="%{text:.1f}%", textposition="outside", textfont_size=11,
+                hovertemplate="<b>%{x}</b><br>%{data.name}: %{y:.1f}%<extra></extra>",
+            )
+            fig_tasas.update_layout(
                 **PLOTLY_LAYOUT, title=None, height=450,
-                xaxis=dict(title=""),
-                yaxis=dict(title=kpi_sel, gridcolor="rgba(48,54,61,0.4)"),
+                xaxis=dict(title="", tickangle=-35),
+                yaxis=dict(title="Porcentaje (%)", gridcolor="rgba(48,54,61,0.4)"),
                 legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5),
             )
-            st.plotly_chart(fig_evo_line, use_container_width=True, key="cc_evo_line")
+            st.plotly_chart(fig_tasas, use_container_width=True, key="cc_tasas_bar")
+
+            # ── Pendientes bar ────────────────────────────────────────────────
+            st.markdown("---")
+            st.markdown("#### ⏳ Pendientes (Sin Atender) por Agente")
+            df_pend = df_kpi.sort_values("Pendientes", ascending=True)
+            fig_pend = px.bar(
+                df_pend, y="Agente", x="Pendientes", orientation="h",
+                text="Pendientes", color="Pendientes",
+                color_continuous_scale=["#1a1e2e", "#f78166"],
+            )
+            fig_pend.update_traces(
+                texttemplate="%{text:,}", textposition="outside", textfont_size=12,
+                hovertemplate="<b>%{y}</b><br>Pendientes: %{x:,}<extra></extra>",
+            )
+            fig_pend.update_layout(
+                **PLOTLY_LAYOUT, title=None,
+                height=max(380, len(df_pend) * 48),
+                yaxis=dict(title=""),
+                xaxis=dict(title="Pendientes (Sin Atender)", gridcolor="rgba(48,54,61,0.4)"),
+                coloraxis_showscale=False,
+            )
+            st.plotly_chart(fig_pend, use_container_width=True, key="cc_pend_bar")
+
+            # ── Heatmap: Agent × Hour activity ────────────────────────────────
+            st.markdown("---")
+            st.markdown("#### 🔥 Mapa de Calor de Actividad por Hora")
+            st.markdown("Suma de actividad de todos los días por agente y franja horaria.")
+
+            heat_rows = []
+            for a in agents:
+                gdf = a["grid"]
+                if gdf.empty:
+                    continue
+                # Columns: Día, 8:00, 9:00, ..., 19:00
+                hour_cols = [c for c in gdf.columns if re.match(r"\d+:\d+", c)]
+                for hc in hour_cols:
+                    total = gdf[hc].apply(_time_to_minutes).sum()
+                    heat_rows.append({"Agente": a["agente"], "Hora": hc, "Actividad": round(total, 1)})
+
+            if heat_rows:
+                df_heat = pd.DataFrame(heat_rows)
+                mat = df_heat.pivot(index="Agente", columns="Hora", values="Actividad").fillna(0)
+
+                # Sort hours numerically
+                sorted_hours = sorted(mat.columns, key=lambda h: int(h.split(":")[0]))
+                mat = mat[sorted_hours]
+
+                fig_cc_heat = px.imshow(
+                    mat, text_auto=".1f", aspect="auto",
+                    labels=dict(x="Hora del Día", y="Agente", color="Minutos"),
+                    color_continuous_scale=HEATMAP_COLORS,
+                )
+                fig_cc_heat.update_layout(
+                    **PLOTLY_LAYOUT, title=None, height=max(380, len(mat) * 45),
+                    xaxis=dict(side="top"),
+                )
+                fig_cc_heat.update_traces(
+                    hovertemplate="<b>%{y}</b> a las <b>%{x}</b><br>Actividad: %{z:.1f} min<extra></extra>"
+                )
+                st.plotly_chart(fig_cc_heat, use_container_width=True, key="cc_heatmap")
+            else:
+                st.info("No se pudo generar el mapa de calor (tablas de grilla no detectadas).")
+                with st.expander("🛠️ Debug: Ver texto extraído del PDF", expanded=False):
+                    for a in agents:
+                        st.markdown(f"**Agente: {a['agente']}** — Grid cols: {list(a['grid'].columns) if not a['grid'].empty else '(vacío)'}")
+                        if not a["grid"].empty:
+                            st.dataframe(a["grid"], use_container_width=True, hide_index=True)
+                        raw = a.get("_raw_text", "")
+                        if raw:
+                            st.code(raw[:1500], language="text")
+                        st.markdown("---")
+
+            # ── Individual agent detail ───────────────────────────────────────
+            st.markdown("---")
+            st.markdown("#### 🔍 Detalle Individual de Agente")
+            agent_names = [a["agente"] for a in agents]
+            sel_agent = st.selectbox("Seleccionar agente:", agent_names, key="cc_sel_agent")
+
+            sel_data = next((a for a in agents if a["agente"] == sel_agent), None)
+            if sel_data:
+                # KPI mini-cards for selected agent
+                kp = sel_data["kpis"]
+                c1, c2, c3, c4, c5 = st.columns(5)
+                c1.metric("⏱️ T. Promedio Resp.", kp.get("Tiempo Promedio Respuesta", "N/D"))
+                c2.metric("🎯 Oportunidades", f"{kp.get('Oportunidades Nuevas', 0):,}")
+                c3.metric("📈 Gestión", f"{kp.get('Tasa de Gestión (%)', 0):.1f}%")
+                c4.metric("🏆 Cierre", f"{kp.get('Tasa de Cierre (%)', 0):.1f}%")
+                c5.metric("⏳ Pendientes", f"{kp.get('Pendientes', 0):,}")
+
+                # Show grid table if available
+                gdf = sel_data["grid"]
+                if not gdf.empty:
+                    st.markdown("##### Grilla de Actividad (valores originales)")
+                    st.dataframe(gdf, use_container_width=True, hide_index=True)
+
+                    # Individual heatmap for this agent
+                    hour_cols = [c for c in gdf.columns if re.match(r"\d+:\d+", c)]
+                    day_col = gdf.columns[0] if gdf.columns[0] not in hour_cols else "Día"
+                    if hour_cols and day_col in gdf.columns:
+                        mat_agent = gdf.set_index(day_col)[hour_cols].map(_time_to_minutes)
+                        sorted_hours_a = sorted(hour_cols, key=lambda h: int(h.split(":")[0]))
+                        mat_agent = mat_agent[sorted_hours_a]
+
+                        fig_agent_heat = px.imshow(
+                            mat_agent, text_auto=".1f", aspect="auto",
+                            labels=dict(x="Hora", y="Día", color="Minutos"),
+                            color_continuous_scale=[
+                                [0.0, "#0d1117"], [0.3, "#1a1e2e"], [0.5, "#2a4a3a"],
+                                [0.7, "#2d7a4a"], [0.9, "#3fb950"], [1.0, "#56d364"],
+                            ],
+                        )
+                        fig_agent_heat.update_layout(
+                            **PLOTLY_LAYOUT,
+                            title=f"Actividad por Día y Hora — {sel_agent}",
+                            height=350,
+                            xaxis=dict(side="top"),
+                        )
+                        fig_agent_heat.update_traces(
+                            hovertemplate="<b>%{y}</b> a las <b>%{x}</b><br>%{z:.1f} min<extra></extra>"
+                        )
+                        st.plotly_chart(fig_agent_heat, use_container_width=True, key="cc_agent_heat")
+
+            # ── Multi-month comparison (if 2+ months loaded) ──────────────────
+            if len(cc_data) >= 2:
+                st.markdown("---")
+                st.markdown("#### 📈 Evolución Mensual entre Períodos")
+
+                evo_rows = []
+                for ml, ags in cc_data.items():
+                    for a in ags:
+                        evo_rows.append({
+                            "Mes": ml,
+                            "Agente": a["agente"],
+                            "Oportunidades Nuevas": a["kpis"].get("Oportunidades Nuevas", 0),
+                            "Tasa de Gestión (%)": a["kpis"].get("Tasa de Gestión (%)", 0),
+                            "Tasa de Cierre (%)": a["kpis"].get("Tasa de Cierre (%)", 0),
+                            "Pendientes": a["kpis"].get("Pendientes", 0),
+                        })
+                df_evo = pd.DataFrame(evo_rows)
+
+                # Total KPI by month
+                df_evo_totals = df_evo.groupby("Mes").agg(
+                    Oportunidades=("Oportunidades Nuevas", "sum"),
+                    Gestión_Prom=("Tasa de Gestión (%)", "mean"),
+                    Cierre_Prom=("Tasa de Cierre (%)", "mean"),
+                    Pendientes=("Pendientes", "sum"),
+                ).reset_index()
+
+                col_evo_a, col_evo_b = st.columns(2)
+                with col_evo_a:
+                    fig_evo_opp = px.bar(
+                        df_evo_totals, x="Mes", y="Oportunidades", text="Oportunidades",
+                        color_discrete_sequence=["#58a6ff"],
+                    )
+                    fig_evo_opp.update_traces(
+                        texttemplate="%{text:,}", textposition="outside",
+                        hovertemplate="<b>%{x}</b><br>Oportunidades: %{y:,}<extra></extra>",
+                    )
+                    fig_evo_opp.update_layout(
+                        **PLOTLY_LAYOUT, title="Oportunidades Nuevas por Mes",
+                        height=380,
+                        xaxis=dict(title=""),
+                        yaxis=dict(title="Oportunidades", gridcolor="rgba(48,54,61,0.4)"),
+                    )
+                    st.plotly_chart(fig_evo_opp, use_container_width=True, key="cc_evo_opp")
+
+                with col_evo_b:
+                    fig_evo_pend = px.bar(
+                        df_evo_totals, x="Mes", y="Pendientes", text="Pendientes",
+                        color_discrete_sequence=["#f78166"],
+                    )
+                    fig_evo_pend.update_traces(
+                        texttemplate="%{text:,}", textposition="outside",
+                        hovertemplate="<b>%{x}</b><br>Pendientes: %{y:,}<extra></extra>",
+                    )
+                    fig_evo_pend.update_layout(
+                        **PLOTLY_LAYOUT, title="Pendientes por Mes",
+                        height=380,
+                        xaxis=dict(title=""),
+                        yaxis=dict(title="Pendientes", gridcolor="rgba(48,54,61,0.4)"),
+                    )
+                    st.plotly_chart(fig_evo_pend, use_container_width=True, key="cc_evo_pend")
+
+                # Per-agent evolution line chart
+                st.markdown("##### Evolución por Agente")
+                kpi_sel = st.selectbox(
+                    "KPI a visualizar:",
+                    ["Oportunidades Nuevas", "Tasa de Gestión (%)", "Tasa de Cierre (%)", "Pendientes"],
+                    key="cc_evo_kpi",
+                )
+                fig_evo_line = px.line(
+                    df_evo, x="Mes", y=kpi_sel, color="Agente",
+                    markers=True, text=kpi_sel,
+                )
+                fig_evo_line.update_traces(textposition="top center", textfont_size=10)
+                fig_evo_line.update_layout(
+                    **PLOTLY_LAYOUT, title=None, height=450,
+                    xaxis=dict(title=""),
+                    yaxis=dict(title=kpi_sel, gridcolor="rgba(48,54,61,0.4)"),
+                    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5),
+                )
+                st.plotly_chart(fig_evo_line, use_container_width=True, key="cc_evo_line")
 
     else:
         st.markdown("---")
