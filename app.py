@@ -2655,8 +2655,17 @@ if tab_cc:
 
                 # Merge turnos with oportunidades
                 df_t_merged = df_turnos_month.copy()
-                total_col = df_t_merged.columns[-1]  # "Total general" or last col
-                study_cols = [c for c in df_t_merged.columns if c not in ("Agente", total_col)]
+                # Find the total column: prefer "Total general" by name, fallback to last col
+                if "Total general" in df_t_merged.columns:
+                    total_col = "Total general"
+                else:
+                    total_col = df_t_merged.columns[-1]
+                # Exclude Agente, total column, and any generic Col_N columns from study types
+                _exclude = {"Agente", total_col}
+                study_cols = [
+                    c for c in df_t_merged.columns
+                    if c not in _exclude and not re.match(r'^Col_\d+$', c)
+                ]
 
                 # Build mapping of normed CC names → oportunidades
                 opp_map = {_norm_name(r["Agente"]): r["Oportunidades Nuevas"] for _, r in df_kpi.iterrows()}
