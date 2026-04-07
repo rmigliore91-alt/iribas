@@ -327,6 +327,9 @@ def load_data(file):
     df = df.dropna(axis=1, how="all")
 
     # ── Fecha: construct from Año/Mes/Dia columns (unambiguous) ────────
+    # Save original Fecha string for fallback before overwriting
+    _fecha_str_backup = df["Fecha"].copy() if "Fecha" in df.columns else None
+
     if all(c in df.columns for c in ["Año", "Mes", "Dia"]):
         # Build dates from the explicit numeric columns — zero ambiguity
         df["Año"] = pd.to_numeric(df["Año"], errors="coerce")
@@ -336,6 +339,22 @@ def load_data(file):
             df[["Año", "Mes", "Dia"]].rename(columns={"Año": "year", "Mes": "month", "Dia": "day"}),
             errors="coerce",
         )
+        # ── Fallback: fill NaT rows from Fecha string (handles concat'd files missing Año) ──
+        nat_mask = df["Fecha"].isna()
+        if nat_mask.any() and _fecha_str_backup is not None:
+            fallback = pd.to_datetime(_fecha_str_backup[nat_mask], format="%m/%d/%y", errors="coerce")
+            still_missing = fallback.isna() & _fecha_str_backup[nat_mask].notna()
+            if still_missing.any():
+                fallback.loc[still_missing] = pd.to_datetime(
+                    _fecha_str_backup[nat_mask][still_missing], dayfirst=True, errors="coerce"
+                )
+            df.loc[nat_mask, "Fecha"] = fallback
+            # Backfill Año/Mes/Dia from the recovered dates
+            recovered = nat_mask & df["Fecha"].notna()
+            if recovered.any():
+                df.loc[recovered, "Año"] = df.loc[recovered, "Fecha"].dt.year
+                df.loc[recovered, "Mes"] = df.loc[recovered, "Fecha"].dt.month
+                df.loc[recovered, "Dia"] = df.loc[recovered, "Fecha"].dt.day
     elif "Fecha" in df.columns:
         # Fallback: parse from Fecha string (try M/D/YY since that matches the source format)
         parsed = pd.to_datetime(df["Fecha"], format="%m/%d/%y", errors="coerce")
