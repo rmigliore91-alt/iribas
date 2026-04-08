@@ -1219,49 +1219,167 @@ if tab4:
 
 # ── TAB 5 — Red de Derivación ───────────────────────────────────────────────
 if tab5:
-    st.markdown("### 🩺 Médicos Tratantes — Top 15 Volumen y Facturación")
+    st.markdown("### 🩺 Médicos Tratantes — Análisis Red de Derivación")
     if "Doctor Tratante" in df_filtered.columns and "TOTAL" in df_filtered.columns:
-        df_d = (
-            df_filtered
-            .groupby("Doctor Tratante")
-            .agg(Derivaciones=("Doctor Tratante", "count"), Facturacion=("TOTAL", "sum"))
-            .reset_index()
-            .sort_values("Derivaciones", ascending=False)
-            .head(15)
-        )
+        
+        # Filtrar valores en blanco o no asignados
+        df_trat = df_filtered[
+            df_filtered["Doctor Tratante"].notna()
+            & (~df_filtered["Doctor Tratante"].isin(["NO ASIGNADO", ""]))
+        ].copy()
 
-        st.markdown("#### 📋 Tabla de Derivaciones")
-        df_d_show = df_d.copy()
-        df_d_show["Facturacion_fmt"] = df_d_show["Facturacion"].apply(lambda v: f"₲ {v:,.0f}")
-        st.dataframe(
-            df_d_show[["Doctor Tratante", "Derivaciones", "Facturacion_fmt"]].rename(
-                columns={"Facturacion_fmt": "Facturación"}
-            ),
-            use_container_width=True, hide_index=True,
-        )
+        if df_trat.empty:
+            st.info("No hay registros con Doctor Tratante asignado.")
+        else:
+            st5_ranking, st5_detalle, st5_evol = st.tabs([
+                "🏆 Ranking General",
+                "📋 Detalle por Médico",
+                "📈 Evolución Temporal",
+            ])
 
-        st.markdown("---")
-        st.markdown("#### 📊 Visualización")
+            # ── 5A: RANKING GENERAL ──────────────────────────────────────
+            with st5_ranking:
+                st.markdown("#### 🏆 Ranking de Derivaciones (Top 20)")
+                df_d = (
+                    df_trat
+                    .groupby("Doctor Tratante")
+                    .agg(Derivaciones=("Doctor Tratante", "count"), Facturacion=("TOTAL", "sum"))
+                    .reset_index()
+                    .sort_values("Derivaciones", ascending=False)
+                    .head(20)
+                )
 
-        df_d_chart = df_d.sort_values("Facturacion", ascending=True)
-        fig_doc = px.bar(
-            df_d_chart, y="Doctor Tratante", x="Facturacion", orientation="h",
-            color="Derivaciones",
-            color_continuous_scale=["#1a1e2e", "#3fb950"],
-            text="Facturacion",
-        )
-        fig_doc.update_traces(
-            texttemplate="₲%{text:,.0f}", textposition="outside", textfont_size=11,
-            hovertemplate="<b>%{y}</b><br>Derivaciones: %{marker.color:,}<br>Facturación: ₲%{x:,.0f}<extra></extra>",
-        )
-        fig_doc.update_layout(
-            **PLOTLY_LAYOUT, title=None,
-            height=max(400, len(df_d_chart) * 38),
-            yaxis=dict(title=""),
-            xaxis=dict(title="Facturación (₲)", gridcolor="rgba(48,54,61,0.4)"),
-            coloraxis_colorbar=dict(title="Derivaciones"),
-        )
-        st.plotly_chart(fig_doc, use_container_width=True, key="tab5_doc")
+                df_d_chart = df_d.sort_values("Facturacion", ascending=True)
+                fig_doc = px.bar(
+                    df_d_chart, y="Doctor Tratante", x="Facturacion", orientation="h",
+                    color="Derivaciones",
+                    color_continuous_scale=["#1a1e2e", "#3fb950"],
+                    text="Facturacion",
+                )
+                fig_doc.update_traces(
+                    texttemplate="₲%{text:,.0f}", textposition="outside", textfont_size=11,
+                    hovertemplate="<b>%{y}</b><br>Derivaciones: %{marker.color:,}<br>Facturación: ₲%{x:,.0f}<extra></extra>",
+                )
+                fig_doc.update_layout(
+                    **PLOTLY_LAYOUT, title=None,
+                    height=max(500, len(df_d_chart) * 35),
+                    yaxis=dict(title=""),
+                    xaxis=dict(title="Facturación (₲)", gridcolor="rgba(48,54,61,0.4)"),
+                    coloraxis_colorbar=dict(title="Derivaciones"),
+                )
+                st.plotly_chart(fig_doc, use_container_width=True, key="tab5_doc_ranking")
+
+                st.markdown("#### 📋 Tabla Resumen (Todos)")
+                df_d_all = (
+                    df_trat
+                    .groupby("Doctor Tratante")
+                    .agg(Derivaciones=("Doctor Tratante", "count"), Facturacion=("TOTAL", "sum"))
+                    .reset_index()
+                    .sort_values("Derivaciones", ascending=False)
+                )
+                df_d_all["Ticket_Promedio"] = (df_d_all["Facturacion"] / df_d_all["Derivaciones"]).apply(lambda v: f"₲ {v:,.0f}")
+                df_d_all["Facturacion_fmt"] = df_d_all["Facturacion"].apply(lambda v: f"₲ {v:,.0f}")
+                
+                st.dataframe(
+                    df_d_all[["Doctor Tratante", "Derivaciones", "Facturacion_fmt", "Ticket_Promedio"]].rename(
+                        columns={"Facturacion_fmt": "Facturación", "Ticket_Promedio": "Ticket Promedio"}
+                    ),
+                    use_container_width=True, hide_index=True,
+                )
+
+            # ── 5B: DETALLE POR MÉDICO ────────────────────────────────────
+            with st5_detalle:
+                st.markdown("#### Desglose Sectorial y Cobranza")
+                medicos = sorted(df_trat["Doctor Tratante"].unique())
+                sel_medico = st.selectbox("Selecciona un médico tratante:", medicos, key="med_detail_sel")
+
+                df_med_ind = df_trat[df_trat["Doctor Tratante"] == sel_medico]
+
+                md1, md2, md3 = st.columns(3)
+                md1.metric("📋 Derivaciones", f"{len(df_med_ind):,}")
+                md2.metric("💵 Facturación", f"₲ {df_med_ind['TOTAL'].sum():,.0f}")
+                md3.metric("🎫 Ticket Prom.", f"₲ {(df_med_ind['TOTAL'].sum() / len(df_med_ind)) if len(df_med_ind)>0 else 0:,.0f}")
+
+                has_sector = "Sector" in df_med_ind.columns
+                has_seguro = "Seguro" in df_med_ind.columns
+
+                if has_sector or has_seguro:
+                    col_m1, col_m2 = st.columns(2)
+
+                    if has_sector:
+                        df_med_sec = df_med_ind.groupby("Sector").agg(Estudios=("TOTAL", "count")).reset_index().sort_values("Estudios", ascending=True)
+                        fig_m_sec = px.bar(df_med_sec, y="Sector", x="Estudios", orientation="h", text="Estudios", color="Estudios", color_continuous_scale=["#1a1e2e", "#58a6ff"])
+                        fig_m_sec.update_traces(texttemplate="%{text:,}", textposition="outside", textfont_size=11, hovertemplate="<b>%{y}</b><br>Estudios: %{x:,}<extra></extra>")
+                        fig_m_sec.update_layout(**PLOTLY_LAYOUT, title="Estudios por Sector", height=300, yaxis=dict(title=""), coloraxis_showscale=False)
+                        col_m1.plotly_chart(fig_m_sec, use_container_width=True, key="tab5_det_sec")
+                    
+                    if has_seguro:
+                        df_med_seg = df_med_ind.groupby("Seguro").agg(Estudios=("TOTAL", "count")).reset_index().sort_values("Estudios", ascending=True)
+                        fig_m_seg = px.bar(df_med_seg, y="Seguro", x="Estudios", orientation="h", text="Estudios", color="Estudios", color_continuous_scale=["#1a1e2e", "#bc8cff"])
+                        fig_m_seg.update_traces(texttemplate="%{text:,}", textposition="outside", textfont_size=11, hovertemplate="<b>%{y}</b><br>Estudios: %{x:,}<extra></extra>")
+                        fig_m_seg.update_layout(**PLOTLY_LAYOUT, title="Estudios por Seguro", height=300, yaxis=dict(title=""), coloraxis_showscale=False)
+                        col_m2.plotly_chart(fig_m_seg, use_container_width=True, key="tab5_det_seg")
+
+            # ── 5C: EVOLUCIÓN TEMPORAL ────────────────────────────────────
+            with st5_evol:
+                st.markdown("#### Evolución Temporal de Derivaciones")
+                if "Fecha" in df_trat.columns and df_trat["Fecha"].notna().any():
+                    # Agrupar por mes y medico
+                    evol_med = (
+                        df_trat.groupby([pd.Grouper(key="Fecha", freq="ME"), "Doctor Tratante"])
+                        .agg(Derivaciones=("Doctor Tratante", "count"), Facturacion=("TOTAL", "sum"))
+                        .reset_index()
+                    )
+                    evol_med["Periodo"] = evol_med["Fecha"].dt.strftime("%Y-%m")
+
+                    medicos_evol = sorted(evol_med["Doctor Tratante"].unique())
+                    # Autocompletar solo si existen al menos 3
+                    top_n_medicos = df_trat["Doctor Tratante"].value_counts().head(3).index.tolist()
+                    sel_med_evol = st.multiselect(
+                        "Selecciona médicos tratantes a comparar:",
+                        medicos_evol,
+                        default=top_n_medicos,
+                        key="med_evol_sel",
+                    )
+
+                    if sel_med_evol:
+                        df_evol_sel = evol_med[evol_med["Doctor Tratante"].isin(sel_med_evol)]
+                        df_evol_sel = df_evol_sel.sort_values(["Periodo"])
+
+                        # Evolutivo Derivaciones
+                        fig_evol_vol_m = px.line(
+                            df_evol_sel, x="Periodo", y="Derivaciones",
+                            color="Doctor Tratante", markers=True,
+                        )
+                        fig_evol_vol_m.update_layout(
+                            **PLOTLY_LAYOUT,
+                            title="Volumen de Derivaciones",
+                            yaxis=dict(title="Derivaciones", gridcolor="rgba(48,54,61,0.4)"),
+                            legend=dict(title=None, orientation="h", yanchor="bottom", y=-0.3, xanchor="center", x=0.5),
+                            height=450,
+                        )
+                        st.plotly_chart(fig_evol_vol_m, use_container_width=True, key="med_evol_line_vol")
+
+                        # Evolutivo Facturacion
+                        fig_evol_fac_m = px.line(
+                            df_evol_sel, x="Periodo", y="Facturacion",
+                            color="Doctor Tratante", markers=True,
+                        )
+                        fig_evol_fac_m.update_traces(
+                            hovertemplate="<b>%{data.name}</b><br>%{x}<br>Facturación: ₲%{y:,.0f}<extra></extra>",
+                        )
+                        fig_evol_fac_m.update_layout(
+                            **PLOTLY_LAYOUT,
+                            title="Facturación Generada (₲)",
+                            yaxis=dict(title="Facturación (₲)", gridcolor="rgba(48,54,61,0.4)", tickformat=",.0f"),
+                            legend=dict(title=None, orientation="h", yanchor="bottom", y=-0.3, xanchor="center", x=0.5),
+                            height=450,
+                        )
+                        st.plotly_chart(fig_evol_fac_m, use_container_width=True, key="med_evol_line_fac")
+                    else:
+                        st.info("Selecciona al menos un médico.")
+                else:
+                    st.info("Columna 'Fecha' no disponible para evolución temporal.")
     else:
         st.info("Columnas 'Doctor Tratante' o 'TOTAL' no disponibles.")
 
