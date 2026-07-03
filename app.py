@@ -2522,43 +2522,73 @@ if tab_cc:
 
 
     # ── Persistence helpers ────────────────────────────────────────────────
-    _CC_DATA_PATH = os.path.join("data", "cc_data.json")
-    _CC_TURNOS_PATH = os.path.join("data", "cc_turnos.json")
+    _CC_DATA_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "cc_data.json")
+    _CC_TURNOS_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "cc_turnos.json")
+
+    _MESES_ES = {
+        "enero": 1, "febrero": 2, "marzo": 3, "abril": 4,
+        "mayo": 5, "junio": 6, "julio": 7, "agosto": 8,
+        "septiembre": 9, "octubre": 10, "noviembre": 11, "diciembre": 12,
+    }
+
+    def _month_sort_key(label: str) -> tuple:
+        """Return (year, month_number) for chronological sorting.
+        Parses labels like 'Marzo 2026', 'marzo 2026', 'Marzo-2026', etc.
+        Falls back to (9999, 0) so unparseable labels go to the end.
+        """
+        import re as _re
+        tokens = _re.split(r"[\s,/\-]+", label.strip().lower())
+        year, month = 9999, 0
+        for tok in tokens:
+            if tok.isdigit() and len(tok) == 4:
+                year = int(tok)
+            elif tok in _MESES_ES:
+                month = _MESES_ES[tok]
+        return (year, month)
+
+    def _sort_dict_chronologically(d: dict) -> dict:
+        """Return a new dict with keys sorted chronologically."""
+        return dict(sorted(d.items(), key=lambda kv: _month_sort_key(kv[0])))
 
     def _save_cc_data():
-        """Save CC data and turnos to JSON files for persistence."""
+        """Save CC data and turnos to JSON files for persistence, sorted chronologically."""
         import json
-        # Save CC data (list of agent dicts per month)
+        # Save CC data (list of agent dicts per month) — sorted by month/year
         try:
+            sorted_cc = _sort_dict_chronologically(st.session_state.get("_cc_data", {}))
             with open(_CC_DATA_PATH, "w", encoding="utf-8") as f:
-                json.dump(st.session_state.get("_cc_data", {}), f, ensure_ascii=False)
+                json.dump(sorted_cc, f, ensure_ascii=False)
         except Exception:
             pass
-        # Save turnos data (DataFrames → dict per month)
+        # Save turnos data (DataFrames → dict per month) — sorted by month/year
         try:
             turnos = st.session_state.get("_cc_turnos", {})
-            turnos_serial = {k: v.to_dict(orient="records") for k, v in turnos.items()}
+            sorted_turnos = _sort_dict_chronologically(turnos)
+            turnos_serial = {k: v.to_dict(orient="records") for k, v in sorted_turnos.items()}
             with open(_CC_TURNOS_PATH, "w", encoding="utf-8") as f:
                 json.dump(turnos_serial, f, ensure_ascii=False)
         except Exception:
             pass
 
     def _load_cc_data():
-        """Load CC data and turnos from JSON files."""
+        """Load CC data and turnos from JSON files, preserving chronological order."""
         import json
         cc_data = {}
         cc_turnos = {}
         if os.path.exists(_CC_DATA_PATH):
             try:
                 with open(_CC_DATA_PATH, "r", encoding="utf-8") as f:
-                    cc_data = json.load(f)
+                    raw_cc = json.load(f)
+                cc_data = _sort_dict_chronologically(raw_cc)
             except Exception:
                 pass
         if os.path.exists(_CC_TURNOS_PATH):
             try:
                 with open(_CC_TURNOS_PATH, "r", encoding="utf-8") as f:
                     raw = json.load(f)
-                cc_turnos = {k: pd.DataFrame(v) for k, v in raw.items()}
+                cc_turnos = _sort_dict_chronologically(
+                    {k: pd.DataFrame(v) for k, v in raw.items()}
+                )
             except Exception:
                 pass
         return cc_data, cc_turnos
@@ -2650,7 +2680,10 @@ if tab_cc:
     # ── Show loaded months ───────────────────────────────────────────────
     cc_data = st.session_state.get("_cc_data", {})
     turnos_data = st.session_state.get("_cc_turnos", {})
-    all_months = sorted(set(list(cc_data.keys()) + list(turnos_data.keys())))
+    all_months = sorted(
+        set(list(cc_data.keys()) + list(turnos_data.keys())),
+        key=_month_sort_key
+    )
 
     if all_months:
         st.markdown("---")
