@@ -2700,7 +2700,8 @@ if tab_cc:
                 badges.append(f"📊 Call Center ({n_agents} agentes)")
             if has_t:
                 df_t = turnos_data[ml]
-                total_t = int(df_t.iloc[:, -1].sum()) if not df_t.empty else 0
+                _total_col_t = "Total general" if "Total general" in df_t.columns else df_t.columns[-1]
+                total_t = int(df_t[_total_col_t].sum()) if not df_t.empty else 0
                 badges.append(f"📅 Turnos ({len(df_t)} agentes · {total_t:,} turnos)")
 
             badge_html = " &nbsp;·&nbsp; ".join(badges)
@@ -2779,7 +2780,11 @@ if tab_cc:
             turnos_data = st.session_state.get("_cc_turnos", {})
             df_turnos_month = turnos_data.get(sel_month, pd.DataFrame())
             has_turnos = not df_turnos_month.empty
-            total_turnos = int(df_turnos_month.iloc[:, -1].sum()) if has_turnos else 0
+            if has_turnos:
+                _total_col = "Total general" if "Total general" in df_turnos_month.columns else df_turnos_month.columns[-1]
+                total_turnos = int(df_turnos_month[_total_col].sum())
+            else:
+                total_turnos = 0
             tasa_conversion = (total_turnos / total_oportunidades * 100) if total_oportunidades > 0 and has_turnos else None
 
             if has_turnos:
