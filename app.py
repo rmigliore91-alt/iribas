@@ -2349,16 +2349,26 @@ if tab_cc:
         header_line = ""
         text_data = []  # [(agent_name, [int_values])]
 
+        # Keywords that identify report title/heading lines — never agent names
+        _TITLE_KEYWORDS = {
+            "turnos", "agendados", "agente", "reporte", "informe",
+            "período", "periodo", "resumen", "detalle", "consolidado",
+        }
+
         for ln in lines:
             tokens = ln.split()
             if not tokens:
                 continue
-            # Detect header line
+            # Detect column header line
             if any("etiqueta" in t.lower() for t in tokens[:3]) or (
                 "total" in ln.lower() and "general" in ln.lower() and
                 any(kw in ln.lower() for kw in ("audio", "resonancia", "ecograf"))
             ):
                 header_line = ln
+                continue
+            # Skip title/heading lines (e.g. "Turnos Agendados por Agente - Mayo 2026")
+            text_tokens_lower = {t.lower().strip(":-.,") for t in tokens}
+            if text_tokens_lower & _TITLE_KEYWORDS:
                 continue
             # Data row: name + numbers
             num_start = -1
@@ -2371,7 +2381,9 @@ if tab_cc:
                     continue
             if num_start > 0:
                 agent_name = "".join(tokens[:num_start])
-                if agent_name.lower() in ("total", "totalgeneral", "grantotal"):
+                # Skip any form of totals row
+                agent_norm = agent_name.lower().replace(" ", "").replace("-", "")
+                if agent_norm in ("total", "totalgeneral", "grantotal", "totales"):
                     continue
                 values = []
                 for t in tokens[num_start:]:
@@ -2384,6 +2396,7 @@ if tab_cc:
                             pass
                 if values:
                     text_data.append((agent_name, values))
+
 
         if not text_data:
             return pd.DataFrame()
