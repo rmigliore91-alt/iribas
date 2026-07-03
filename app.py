@@ -2553,35 +2553,66 @@ if tab_cc:
     def _save_cc_data():
         """Save CC data and turnos to JSON files for persistence, sorted chronologically."""
         import json
-        # Save CC data (list of agent dicts per month) — sorted by month/year
+
+        def _serialize_agent(agent: dict) -> dict:
+            """Convert agent dict to JSON-serializable form (grid DataFrame → records)."""
+            out = dict(agent)
+            grid = out.get("grid")
+            if isinstance(grid, pd.DataFrame):
+                out["grid"] = grid.to_dict(orient="records")
+                out["_grid_columns"] = list(grid.columns)
+            return out
+
+        # Save CC data — convert DataFrames inside agent dicts, sort chronologically
         try:
             sorted_cc = _sort_dict_chronologically(st.session_state.get("_cc_data", {}))
+            serializable_cc = {
+                month: [_serialize_agent(a) for a in agents]
+                for month, agents in sorted_cc.items()
+            }
             with open(_CC_DATA_PATH, "w", encoding="utf-8") as f:
-                json.dump(sorted_cc, f, ensure_ascii=False)
-        except Exception:
-            pass
-        # Save turnos data (DataFrames → dict per month) — sorted by month/year
+                json.dump(serializable_cc, f, ensure_ascii=False)
+        except Exception as _e:
+            print(f"[CC] Error guardando cc_data.json: {_e}")
+
+        # Save turnos data (DataFrames → records per month) — sorted chronologically
         try:
             turnos = st.session_state.get("_cc_turnos", {})
             sorted_turnos = _sort_dict_chronologically(turnos)
             turnos_serial = {k: v.to_dict(orient="records") for k, v in sorted_turnos.items()}
             with open(_CC_TURNOS_PATH, "w", encoding="utf-8") as f:
                 json.dump(turnos_serial, f, ensure_ascii=False)
-        except Exception:
-            pass
+        except Exception as _e:
+            print(f"[CC] Error guardando cc_turnos.json: {_e}")
 
     def _load_cc_data():
         """Load CC data and turnos from JSON files, preserving chronological order."""
         import json
+
+        def _deserialize_agent(agent: dict) -> dict:
+            """Reconstruct agent dict: restore grid from records back to DataFrame."""
+            out = dict(agent)
+            records = out.get("grid")
+            cols = out.pop("_grid_columns", None)
+            if isinstance(records, list):
+                out["grid"] = pd.DataFrame(records, columns=cols) if cols else pd.DataFrame(records)
+            else:
+                out["grid"] = pd.DataFrame()
+            return out
+
         cc_data = {}
         cc_turnos = {}
         if os.path.exists(_CC_DATA_PATH):
             try:
                 with open(_CC_DATA_PATH, "r", encoding="utf-8") as f:
                     raw_cc = json.load(f)
-                cc_data = _sort_dict_chronologically(raw_cc)
-            except Exception:
-                pass
+                restored = {
+                    month: [_deserialize_agent(a) for a in agents]
+                    for month, agents in raw_cc.items()
+                }
+                cc_data = _sort_dict_chronologically(restored)
+            except Exception as _e:
+                print(f"[CC] Error cargando cc_data.json: {_e}")
         if os.path.exists(_CC_TURNOS_PATH):
             try:
                 with open(_CC_TURNOS_PATH, "r", encoding="utf-8") as f:
@@ -2589,8 +2620,8 @@ if tab_cc:
                 cc_turnos = _sort_dict_chronologically(
                     {k: pd.DataFrame(v) for k, v in raw.items()}
                 )
-            except Exception:
-                pass
+            except Exception as _e:
+                print(f"[CC] Error cargando cc_turnos.json: {_e}")
         return cc_data, cc_turnos
 
     # ── Session-state store for multi-month data ─────────────────────────
